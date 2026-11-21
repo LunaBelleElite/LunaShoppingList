@@ -1,0 +1,8 @@
+{
+  "itemID": 777,
+  "worldID": 33,
+  "worldName": "Gamma",
+  "listings": [
+    { "lastReviewTime": 1700000000, "pricePerUnit": 12, "quantity": 2, "hq": false }
+  ]
+}

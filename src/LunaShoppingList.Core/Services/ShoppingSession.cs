@@ -1,0 +1,106 @@
+namespace LunaShoppingList.Core;
+
+/// <summary>
+/// The current ingredient requirements plus the user's include/exclude choices.
+/// UI-independent so the toggle rules are unit-tested. Everything is included by default.
+/// </summary>
+public sealed class ShoppingSession
+{
+    private readonly MaterialsCalculator _calc;
+    private readonly IItemInfo _items;
+    private IReadOnlyList<Requirement> _requirements = Array.Empty<Requirement>();
+
+    /// <summary>Creates a session.</summary>
+    /// <param name="calc">Computes requirements for an Artisan list.</param>
+    /// <param name="items">Item data, used to recognise crystals, shards and clusters.</param>
+    public ShoppingSession(MaterialsCalculator calc, IItemInfo items)
+    {
+        _calc = calc ?? throw new ArgumentNullException(nameof(calc));
+        _items = items ?? throw new ArgumentNullException(nameof(items));
+    }
+
+    /// <summary>Current requirements, ordered by item id.</summary>
+    public IReadOnlyList<Requirement> Requirements => _requirements;
+
+    /// <summary>The exclusion state, as passed to the planner.</summary>
+    public ExclusionState Exclusions { get; } = new();
+
+    /// <summary>Item ids of the current requirements that are crystals, shards or clusters.</summary>
+    public IReadOnlyList<uint> CrystalLikeItemIds
+        => _requirements.Where(r => _items.IsCrystalLike(r.ItemId)).Select(r => r.ItemId).ToList();
+
+    /// <summary>
+    /// Replaces the requirements with those of an Artisan list. Exclusions are left as they are, so call
+    /// <see cref="ImportExclusions"/> first to apply a list's remembered choices.
+    /// </summary>
+    /// <param name="list">The Artisan list.</param>
+    public void LoadFromList(CraftingList list)
+    {
+        ArgumentNullException.ThrowIfNull(list);
+        _requirements = _calc.Compute(list).OrderBy(r => r.ItemId).ToList();
+    }
+
+    /// <summary>
+    /// Replaces the requirements with those of an Artisan list and the exclusions with the list's remembered
+    /// choices, all or nothing: if computing the requirements throws, neither is changed.
+    /// </summary>
+    /// <param name="list">The Artisan list.</param>
+    /// <param name="excludedItemIds">The list's remembered excluded item ids.</param>
+    /// <exception cref="InvalidOperationException">The list references an unknown recipe.</exception>
+    /// <exception cref="OverflowException">A quantity exceeds the int range.</exception>
+    public void LoadFromList(CraftingList list, IEnumerable<uint> excludedItemIds)
+    {
+        ArgumentNullException.ThrowIfNull(list);
+        ArgumentNullException.ThrowIfNull(excludedItemIds);
+        var requirements = _calc.Compute(list).OrderBy(r => r.ItemId).ToList();
+        var excluded = excludedItemIds.ToList();
+        _requirements = requirements;
+        Exclusions.ExcludedItemIds.Clear();
+        foreach (var id in excluded) Exclusions.ExcludedItemIds.Add(id);
+    }
+
+    /// <summary>Replaces the requirements with pasted ones and clears all exclusions (paste choices are not remembered).</summary>
+    /// <param name="paste">The parsed paste.</param>
+    public void LoadFromPaste(PasteResult paste)
+    {
+        ArgumentNullException.ThrowIfNull(paste);
+        _requirements = paste.Requirements.OrderBy(r => r.ItemId).ToList();
+        Exclusions.ExcludedItemIds.Clear();
+    }
+
+    /// <summary>Includes or excludes one item; other items are unaffected.</summary>
+    /// <param name="itemId">Item row id.</param>
+    /// <param name="included">True to buy it, false to skip it.</param>
+    public void SetIncluded(uint itemId, bool included) => Exclusions.SetExcluded(itemId, !included);
+
+    /// <summary>True unless the item is excluded.</summary>
+    /// <param name="itemId">Item row id.</param>
+    public bool IsIncluded(uint itemId) => !Exclusions.IsExcluded(itemId);
+
+    /// <summary>Excludes or re-includes every crystal-like requirement; other items are unaffected.</summary>
+    /// <param name="excluded">True to exclude them all.</param>
+    public void SetCrystalsExcluded(bool excluded) => Exclusions.ExcludeAll(CrystalLikeItemIds, excluded);
+
+    /// <summary>True only if there is at least one crystal-like requirement and all of them are excluded.</summary>
+    public bool AreAllCrystalsExcluded
+    {
+        get
+        {
+            var ids = CrystalLikeItemIds;
+            return ids.Count > 0 && ids.All(Exclusions.IsExcluded);
+        }
+    }
+
+    /// <summary>A copy of the excluded item ids, including ids not in the current requirements.</summary>
+    public IReadOnlySet<uint> ExportExclusions() => new HashSet<uint>(Exclusions.ExcludedItemIds);
+
+    /// <summary>Replaces the exclusions with the given ids (ids not in the current requirements are kept).</summary>
+    /// <param name="itemIds">Excluded item ids.</param>
+    public void ImportExclusions(IEnumerable<uint> itemIds)
+    {
+        ArgumentNullException.ThrowIfNull(itemIds);
+        var copy = itemIds.ToList();
+        Exclusions.ExcludedItemIds.Clear();
+        foreach (var id in copy) Exclusions.ExcludedItemIds.Add(id);
+    }
+}

@@ -1,0 +1,9 @@
+{
+  "NewCraftingLists": {
+    "$type": "System.Collections.Generic.List`1[[Artisan.CraftingLists.NewCraftingList, Artisan]], mscorlib",
+    "$values": [
+      { "ID": 4, "Name": "Wrapped",
+        "Recipes": { "$type": "System.Collections.Generic.List`1[[X]]", "$values": [ { "ID": 40, "Quantity": 6 }, { "ID": 41, "Quantity": 7 } ] } }
+    ]
+  }
+}

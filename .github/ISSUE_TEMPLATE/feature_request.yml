@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest something it should do
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. Telling me what you're trying to get done helps
+        more than telling me how to build it.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What would you like it to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why do you want it?
+      description: What are you doing right now that this would make easier, and what do you do instead today?
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched the existing issues and didn't find this already requested.
+          required: true

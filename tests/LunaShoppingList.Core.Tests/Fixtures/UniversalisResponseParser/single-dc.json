@@ -1,0 +1,10 @@
+{
+  "itemID": 555,
+  "lastUploadTime": 1700000000000,
+  "listings": [
+    { "lastReviewTime": 1700000000, "pricePerUnit": 1000, "quantity": 1, "hq": true, "worldName": "Alpha", "worldID": 11 },
+    { "lastReviewTime": 1700000100, "pricePerUnit": 800, "quantity": 5, "hq": false, "worldName": "Beta", "worldID": 22 }
+  ],
+  "dcName": "Crystal",
+  "unknownThing": [1, 2, 3]
+}

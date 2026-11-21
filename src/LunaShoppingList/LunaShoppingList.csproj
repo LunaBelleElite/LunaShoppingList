@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+  <PropertyGroup>
+    <!-- Manifest fields (see https://github.com/goatcorp/DalamudPackager/blob/827d88dc/DalamudPackager/DalamudPackager.cs#L420) -->
+    <Author>LunaBelleElite</Author>
+    <Name>Luna Shopping List</Name>
+    <Punchline>Builds a price-optimised shopping list from an Artisan crafting list.</Punchline>
+    <Description>Builds a price-optimised shopping list, grouped by world, from an Artisan crafting list using current Universalis prices.</Description>
+    <RepoUrl>https://github.com/LunaBelleElite/LunaShoppingList</RepoUrl>
+    <Tags>crafting;artisan;shopping;market;universalis</Tags>
+    <RootNamespace>LunaShoppingList</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LunaShoppingList.Core\LunaShoppingList.Core.csproj" />
+  </ItemGroup>
+</Project>

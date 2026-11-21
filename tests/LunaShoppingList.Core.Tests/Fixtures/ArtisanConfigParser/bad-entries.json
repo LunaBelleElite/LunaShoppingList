@@ -1,0 +1,23 @@
+{
+  "NewCraftingLists": [
+    { "Name": "no id", "Recipes": [ { "ID": 1, "Quantity": 1 } ] },
+    { "ID": "text", "Name": "string id" },
+    "not an object",
+    null,
+    { "ID": 5, "Name": "Mixed", "Recipes": [
+        { "ID": 1, "Quantity": 2 },
+        { "Quantity": 2 },
+        { "ID": 2 },
+        { "ID": -3, "Quantity": 1 },
+        { "ID": 4, "Quantity": 0 },
+        { "ID": 5, "Quantity": -2 },
+        { "ID": 6, "Quantity": 1.5 },
+        { "ID": 99999999999, "Quantity": 1 },
+        { "ID": 7, "Quantity": "3" },
+        "junk",
+        { "ID": 8, "Quantity": 4, "ListItemOptions": null },
+        { "ID": 9, "Quantity": 4, "ListItemOptions": { "NQOnly": "yes", "Skipping": 1 } }
+    ] },
+    { "ID": 6, "Name": "After" }
+  ]
+}

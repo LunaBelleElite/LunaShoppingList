@@ -1,0 +1,8 @@
+{
+  "itemIDs": [10, 20],
+  "items": {
+    "10": { "itemID": 10, "listings": [ { "lastReviewTime": 1700000000, "pricePerUnit": 5, "quantity": 1, "hq": false, "worldName": "Alpha", "worldID": 11 } ] },
+    "20": { "itemID": 20, "listings": [ { "lastReviewTime": 1700000000, "pricePerUnit": 9, "quantity": 2, "hq": true, "worldName": "Beta", "worldID": 22 } ] }
+  },
+  "unresolvedItems": []
+}

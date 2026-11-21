@@ -1,0 +1,12 @@
+{
+  "items": {
+    "1": { "listings": [
+      { "pricePerUnit": 10, "quantity": 4 },
+      { "pricePerUnit": 11 },
+      { "quantity": 5 },
+      "not-an-object",
+      { "pricePerUnit": 12, "quantity": 6, "hq": true, "worldName": "Delta", "worldID": 44, "lastReviewTime": 1700000000 }
+    ] },
+    "2": { "itemID": 2 }
+  }
+}

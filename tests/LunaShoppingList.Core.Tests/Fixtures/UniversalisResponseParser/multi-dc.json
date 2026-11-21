@@ -1,0 +1,21 @@
+{
+  "itemIDs": [100, 200, 300, 400],
+  "items": {
+    "100": {
+      "itemID": 100,
+      "lastUploadTime": 1700000000000,
+      "listings": [
+        { "lastReviewTime": 1700000000, "pricePerUnit": 150, "quantity": 3, "hq": true, "worldName": "Alpha", "worldID": 11, "retainerName": "Ignored", "materia": [], "total": 450 },
+        { "lastReviewTime": 1700003600, "pricePerUnit": 90, "quantity": 20, "hq": false, "worldName": "Beta", "worldID": 22, "someFutureField": { "x": 1 } }
+      ],
+      "worldUploadTimes": { "11": 1700000000000 },
+      "hasData": true
+    },
+    "200": { "itemID": 200, "listings": [] },
+    "300": { "itemID": 300, "listings": [
+        { "lastReviewTime": 1700007200, "pricePerUnit": 7, "quantity": 99, "hq": false, "worldName": "Beta", "worldID": 22 }
+    ] }
+  },
+  "unresolvedItems": [400],
+  "dcName": "Crystal"
+}

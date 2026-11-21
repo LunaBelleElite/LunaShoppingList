@@ -1,0 +1,79 @@
+name: Bug report
+description: Something isn't working right
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. The lines from `/xllog` usually turn
+        "it broke" into something that can be chased down, so please paste
+        them if you can.
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Luna Shopping List version
+      description: Shown next to the plugin's name in `/xlplugins`. It looks like `0.2.0.1`.
+      placeholder: "0.2.0.1"
+    validations:
+      required: true
+
+  - type: input
+    id: dalamud-version
+    attributes:
+      label: Dalamud version and API level
+      description: Shown in the Dalamud settings window (`/xlsettings`), in the About section.
+      placeholder: "e.g. Dalamud 13.x, API level 15"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: What did you do?
+      description: The more exact the better. "Picked my Artisan list, chose cross data center, pressed Build" beats "it didn't work."
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: xllog
+    attributes:
+      label: Relevant lines from /xllog
+      description: Open `/xllog`, find the lines from around the time it went wrong (anything mentioning LunaShoppingList or an error) and paste them here.
+      render: text
+
+  - type: input
+    id: artisan
+    attributes:
+      label: Is Artisan loaded, and which version?
+      description: Say "not installed" if you don't use it. Artisan's version is shown in `/xlplugins`.
+      placeholder: "e.g. Artisan 3.x, loaded"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched the existing issues and didn't find the same problem.
+          required: true

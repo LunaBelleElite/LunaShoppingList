@@ -1,0 +1,12 @@
+{
+  "NewCraftingLists": [
+    {
+      "id": 888, "Id": 999, "ID": 1, "name": "wrong", "Name": "Cased",
+      "Recipes": [
+        { "id": 12, "Id": 11, "ID": 10, "quantity": 99, "Quantity": 2,
+          "ListItemOptions": { "nqOnly": false, "NQOnly": true, "skipping": true, "Skipping": false } }
+      ]
+    }
+  ],
+  "Settings": { "requiredFood": 1, "RequiredFood": 2, "requiredfood": 3 }
+}

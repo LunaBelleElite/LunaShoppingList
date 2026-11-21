@@ -1,0 +1,17 @@
+{
+  "Version": 1,
+  "SomethingUnknown": { "a": [1, 2, 3] },
+  "NewCraftingLists": [
+    {
+      "$type": "Artisan.CraftingLists.NewCraftingList, Artisan",
+      "ID": 7, "Name": "Alpha", "ExpandedList": [1, 2], "SkipIfEnough": true, "Futuristic": "x",
+      "Recipes": [
+        { "$type": "Artisan.CraftingLists.ListItem, Artisan", "ID": 100, "Quantity": 3,
+          "ListItemOptions": { "$type": "Artisan.CraftingLists.ListItemOptions, Artisan", "NQOnly": true, "Skipping": false } },
+        { "ID": 200, "Quantity": 5, "ListItemOptions": { "NQOnly": false, "Skipping": true } },
+        { "ID": 300, "Quantity": 1 }
+      ]
+    },
+    { "ID": 2, "Name": "Beta", "Recipes": [] }
+  ]
+}
