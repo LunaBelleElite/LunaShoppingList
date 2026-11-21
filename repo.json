@@ -1,0 +1,30 @@
+[
+  {
+    "Author": "LunaBelleElite",
+    "Name": "Luna Shopping List",
+    "InternalName": "LunaShoppingList",
+    "AssemblyVersion": "0.3.0.0",
+    "Description": "Builds a price-optimised shopping list, grouped by world, from an Artisan crafting list using current Universalis prices.",
+    "Punchline": "Builds a price-optimised shopping list from an Artisan crafting list.",
+    "Tags": [
+      "crafting",
+      "artisan",
+      "shopping",
+      "market",
+      "universalis"
+    ],
+    "ApplicableVersion": "any",
+    "DalamudApiLevel": 15,
+    "LoadPriority": 0,
+    "AcceptsFeedback": true,
+    "RepoUrl": "https://github.com/LunaBelleElite/LunaShoppingList",
+    "IsHide": false,
+    "IsTestingExclusive": false,
+    "DownloadCount": 0,
+    "LastUpdate": 1795301264,
+    "Changelog": "First public release, an early preview: list browser, one window per list, and a results window where you choose the world for each item, with cheapest and fewest-worlds starting plans.",
+    "DownloadLinkInstall": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.3.0.0/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.3.0.0/latest.zip",
+    "DownloadLinkTesting": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.3.0.0/latest.zip"
+  }
+]
