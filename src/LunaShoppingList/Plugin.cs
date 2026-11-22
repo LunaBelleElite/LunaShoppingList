@@ -43,6 +43,7 @@ public sealed class Plugin : IDalamudPlugin
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
         RecipeData = new LuminaRecipeData(DataManager);
+        RecipeData.WarmUp();
         ItemInfo = new LuminaItemInfo(DataManager, Log);
         ItemInfo.WarmUp();
         ItemSources = new LuminaItemSources(DataManager, Log);
@@ -55,9 +56,9 @@ public sealed class Plugin : IDalamudPlugin
         OwnedItems = new OwnedItemsService(PluginInterface, Framework, GameInventory, GameGui, PlayerState, Log);
         diagnosticDump = new DiagnosticDump(DataManager, PlayerState, Log, ChatGui, ArtisanLists, ItemInfo);
 
-        Windows = new WindowManager(WindowSystem, Configuration, ArtisanLists, ItemInfo, WorldData, ShoppingService,
+        Windows = new WindowManager(WindowSystem, Configuration, ArtisanLists, ItemInfo, RecipeData, WorldData, ShoppingService,
             new MaterialsCalculator(RecipeData), OwnedItems, ItemSources, Log);
-        Browser = new ListBrowserWindow(Configuration, ArtisanLists, ItemInfo, ItemInfo, RecipeData, Windows, Log);
+        Browser = new ListBrowserWindow(Configuration, ArtisanLists, ItemInfo, ItemInfo, RecipeData, RecipeData, Windows, Log);
         WindowSystem.AddWindow(Browser);
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
@@ -72,18 +73,34 @@ public sealed class Plugin : IDalamudPlugin
 
     public void Dispose()
     {
-        PluginInterface.UiBuilder.Draw -= DrawUi;
-        PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
-        PluginInterface.UiBuilder.OpenConfigUi -= ToggleMainUi;
+        // Each step is independent: one that throws must not skip the ones after it (above all the final save).
+        Step("remove UI callbacks", () =>
+        {
+            PluginInterface.UiBuilder.Draw -= DrawUi;
+            PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
+            PluginInterface.UiBuilder.OpenConfigUi -= ToggleMainUi;
+        });
         // Stops a vendor index build still running and silences its log.
-        ItemSources.Dispose();
+        Step("dispose item sources", ItemSources.Dispose);
         // Cancels every running build and waits briefly for it, so they are done with the HTTP client first.
-        Windows.Dispose();
-        WindowSystem.RemoveAllWindows();
+        Step("dispose windows", Windows.Dispose);
+        Step("remove windows", WindowSystem.RemoveAllWindows);
         // Stops counting and writes any retainer or saddlebag record not yet saved.
-        OwnedItems.Dispose();
-        CommandManager.RemoveHandler(CommandName);
-        HttpGetter.Dispose();
+        Step("dispose owned items", OwnedItems.Dispose);
+        Step("remove command", () => CommandManager.RemoveHandler(CommandName));
+        Step("dispose HTTP getter", HttpGetter.Dispose);
+    }
+
+    private static void Step(string what, Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Unloading failed at step: {Step}", what);
+        }
     }
 
     private void OnCommand(string command, string args)

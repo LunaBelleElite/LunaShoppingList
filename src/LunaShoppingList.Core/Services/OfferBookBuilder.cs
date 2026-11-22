@@ -83,10 +83,9 @@ public static class OfferBookBuilder
             .OrderByDescending(w => w.UnitsForSale)
             .ThenBy(w => w, Comparer<WorldOffer>.Create((a, b) =>
             {
-                // average unit price a.cost/a.units against b.cost/b.units, cross-multiplied so nothing is rounded
-                var left = a.CostFor(needed) * (long)b.UnitsForSale;
-                var right = b.CostFor(needed) * (long)a.UnitsForSale;
-                return left.CompareTo(right);
+                // The primary key already orders by UnitsForSale, so only equal unit counts reach here: equal average
+                // unit price is then equal total cost, compared exactly. (Cross-multiplying cost * units overflowed a long.)
+                return a.CostFor(needed).CompareTo(b.CostFor(needed));
             }))
             .ThenBy(w => w.WorldName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(w => w.WorldId);

@@ -7,6 +7,19 @@ public sealed record MaterialsResult(IReadOnlyList<Requirement>? Items, string? 
     public bool Ok => Error is null && Items is not null;
 }
 
+/// <summary>One recipe to run when crafting a set of items, with how many times.</summary>
+/// <param name="ItemId">The item the recipe makes.</param>
+/// <param name="RecipeId">The recipe (from <see cref="IRecipeLookup.FindRecipeForItem"/>).</param>
+/// <param name="Crafts">How many times to run it, 1..9,999,999.</param>
+public sealed record CraftEntry(uint ItemId, uint RecipeId, int Crafts);
+
+/// <summary>Outcome of expanding items into the crafts that make them: the entries, or a message the player can read.</summary>
+public sealed record CraftsResult(IReadOnlyList<CraftEntry>? Crafts, string? Error)
+{
+    /// <summary>True when the expansion worked and <see cref="Crafts"/> is set.</summary>
+    public bool Ok => Error is null && Crafts is not null;
+}
+
 /// <summary>Expands a craftable item through every level of sub-crafts into the materials that must be gathered or bought.</summary>
 public static class RecipeExpander
 {
@@ -20,6 +33,10 @@ public static class RecipeExpander
         public RecipeInfo Recipe = null!;
         public readonly List<(uint ItemId, int Amount, bool IsNode)> Edges = new();
         public Int128 Demand;
+        public bool IsRoot;
+
+        /// <summary>A craftable item whose recipe has nothing usable, reached only as an ingredient: gathered like a raw material.</summary>
+        public bool IsGathered => Edges.Count == 0 && !IsRoot;
     }
 
     /// <summary>
@@ -33,16 +50,137 @@ public static class RecipeExpander
     /// </summary>
     public static MaterialsResult ExpandToMaterials(IRecipeLookup recipes, uint itemId, int quantity)
     {
-        if (itemId == 0) return new MaterialsResult(null, "Item is not valid");
-        var rootRecipe = recipes.FindRecipeForItem(itemId);
-        if (rootRecipe is null) return new MaterialsResult(null, "This item cannot be crafted");
-        if (!rootRecipe.Ingredients.Any(i => i.ItemId != 0 && i.Amount >= 1))
-            return new MaterialsResult(null, "This recipe has no ingredients");
+        var problem = RootProblem(recipes, itemId, out var rootRecipe);
+        if (problem != null) return new MaterialsResult(null, problem);
 
         var memo = new Dictionary<uint, RecipeInfo?> { [itemId] = rootRecipe };
         var nodes = new Dictionary<uint, Node>();
-        var onPath = new HashSet<uint>();
         var postorder = new List<uint>();
+        if (!Walk(recipes, memo, nodes, postorder, itemId, rootRecipe!))
+            return new MaterialsResult(null, "This recipe is too large to expand");
+
+        nodes[itemId].IsRoot = true;
+        nodes[itemId].Demand = CustomListOps.ClampQuantity(quantity);
+        var leaves = Propagate(nodes, postorder);
+
+        var result = new List<Requirement>(leaves.Count);
+        foreach (var (id, total) in leaves)
+            result.Add(new Requirement(id, Clamp(total)));
+        return new MaterialsResult(result, null);
+    }
+
+    /// <summary>
+    /// The raw materials of all of <paramref name="roots"/> expanded together, so an intermediate shared by several
+    /// roots, or also given as a root itself, is crafted once with the combined demand rounded up once. A root the
+    /// single-item overload would reject (item id 0, no recipe, a recipe with no usable ingredient) or with a quantity
+    /// below 1 is skipped; it can still be a material of another root. Quantities are clamped to 9,999,999 and a
+    /// repeated root adds to the first. Materials, loops, totals, order and the <see cref="MaxCraftableItems"/> cap
+    /// (counted over all roots together; error "This list is too large to expand") are as in
+    /// <see cref="ExpandToMaterials(IRecipeLookup, uint, int)"/>. No usable root gives an empty list. Nothing is mutated.
+    /// </summary>
+    public static MaterialsResult ExpandToMaterials(IRecipeLookup recipes, IReadOnlyList<Requirement> roots)
+    {
+        var nodes = new Dictionary<uint, Node>();
+        var postorder = new List<uint>();
+        if (!WalkRoots(recipes, roots, true, nodes, postorder))
+            return new MaterialsResult(null, TooLargeList);
+        var leaves = Propagate(nodes, postorder);
+
+        var result = new List<Requirement>(leaves.Count);
+        foreach (var (id, total) in leaves)
+            result.Add(new Requirement(id, Clamp(total)));
+        return new MaterialsResult(result, null);
+    }
+
+    /// <summary>
+    /// The crafts that make all of <paramref name="roots"/> together, through every level of sub-crafts. Roots with
+    /// item id 0, a quantity below 1 or no recipe are ignored; quantities are clamped to 9,999,999 and a repeated root
+    /// adds to the first. Every item is expanded once over the whole set, so an intermediate shared by several roots,
+    /// or also given as a root itself, is crafted once with the combined demand rounded up once:
+    /// crafts = ceil(demand / yield), yield below 1 counting as 1, clamped to 9,999,999. Recipe loops, the
+    /// <see cref="MaxCraftableItems"/> cap (counted over all roots together) and an intermediate whose recipe has no
+    /// usable ingredient are handled as in <see cref="ExpandToMaterials(IRecipeLookup, uint, int)"/>: such an intermediate is a material, not an
+    /// entry, while a root like that is still an entry. Raw materials are not entries. Order is crafting order: each
+    /// entry comes after every entry it uses, intermediates in the order they are first reached, roots in the given
+    /// order. No roots gives an empty list. Nothing is mutated.
+    /// </summary>
+    public static CraftsResult ExpandToCrafts(IRecipeLookup recipes, IReadOnlyList<Requirement> roots)
+    {
+        var nodes = new Dictionary<uint, Node>();
+        var postorder = new List<uint>();
+        if (!WalkRoots(recipes, roots, false, nodes, postorder))
+            return new CraftsResult(null, TooLargeList);
+        Propagate(nodes, postorder);
+
+        var result = new List<CraftEntry>(postorder.Count);
+        foreach (var id in postorder)
+        {
+            var node = nodes[id];
+            if (node.IsGathered) continue;
+            result.Add(new CraftEntry(id, node.Recipe.RecipeId, Clamp(Crafts(node))));
+        }
+        return new CraftsResult(result, null);
+    }
+
+    private const string TooLargeList = "This list is too large to expand";
+
+    /// <summary>
+    /// Why <paramref name="itemId"/> cannot be expanded on its own (the single-item overload's errors, in its order),
+    /// or null; <paramref name="recipe"/> is its recipe when it has one.
+    /// </summary>
+    internal static string? RootProblem(IRecipeLookup recipes, uint itemId, out RecipeInfo? recipe)
+    {
+        recipe = null;
+        if (itemId == 0) return "Item is not valid";
+        recipe = recipes.FindRecipeForItem(itemId);
+        if (recipe is null) return "This item cannot be crafted";
+        if (!recipe.Ingredients.Any(i => i.ItemId != 0 && i.Amount >= 1)) return "This recipe has no ingredients";
+        return null;
+    }
+
+    /// <summary>
+    /// Walks every usable root in turn into one graph (roots with item id 0, a quantity below 1 or no recipe are
+    /// skipped; so is a root whose recipe has no usable ingredient when <paramref name="skipRootsWithoutIngredients"/>),
+    /// marks the roots and sets their summed, clamped demand. False when the graph would pass <see cref="MaxCraftableItems"/>.
+    /// </summary>
+    private static bool WalkRoots(IRecipeLookup recipes, IReadOnlyList<Requirement> roots, bool skipRootsWithoutIngredients,
+        Dictionary<uint, Node> nodes, List<uint> postorder)
+    {
+        var memo = new Dictionary<uint, RecipeInfo?>();
+        var rootDemand = new Dictionary<uint, Int128>();
+
+        foreach (var root in roots)
+        {
+            if (root is null || root.ItemId == 0 || root.Quantity < 1) continue;
+            if (!memo.TryGetValue(root.ItemId, out var recipe))
+            {
+                recipe = recipes.FindRecipeForItem(root.ItemId);
+                memo[root.ItemId] = recipe;
+            }
+            if (recipe is null) continue;
+            if (skipRootsWithoutIngredients && !recipe.Ingredients.Any(i => i.ItemId != 0 && i.Amount >= 1)) continue;
+
+            rootDemand.TryGetValue(root.ItemId, out var have);
+            rootDemand[root.ItemId] = Saturate(have + CustomListOps.ClampQuantity(root.Quantity));
+            if (!nodes.ContainsKey(root.ItemId) && !Walk(recipes, memo, nodes, postorder, root.ItemId, recipe))
+                return false;
+            nodes[root.ItemId].IsRoot = true;
+        }
+
+        foreach (var (id, demand) in rootDemand)
+            nodes[id].Demand = demand;
+        return true;
+    }
+
+    /// <summary>
+    /// Depth-first walk from <paramref name="rootId"/>, adding every craftable item not yet in <paramref name="nodes"/>
+    /// and appending each to <paramref name="postorder"/> once everything it uses is there. An ingredient still on the
+    /// current path (a loop) is an edge to a raw material. False when more than <see cref="MaxCraftableItems"/> nodes would exist.
+    /// </summary>
+    private static bool Walk(IRecipeLookup recipes, Dictionary<uint, RecipeInfo?> memo, Dictionary<uint, Node> nodes,
+        List<uint> postorder, uint rootId, RecipeInfo rootRecipe)
+    {
+        var onPath = new HashSet<uint>();
         var stack = new Stack<(uint Id, int Next)>();
 
         bool Enter(uint id, RecipeInfo recipe)
@@ -55,7 +193,7 @@ public static class RecipeExpander
             return true;
         }
 
-        if (!Enter(itemId, rootRecipe)) return new MaterialsResult(null, "This recipe is too large to expand");
+        if (!Enter(rootId, rootRecipe)) return false;
         while (stack.Count > 0)
         {
             var (id, next) = stack.Pop();
@@ -88,24 +226,28 @@ public static class RecipeExpander
             }
             node.Edges.Add((ing.ItemId, ing.Amount, true));
             if (!nodes.ContainsKey(ing.ItemId) && !Enter(ing.ItemId, child))
-                return new MaterialsResult(null, "This recipe is too large to expand");
+                return false;
         }
+        return true;
+    }
 
-        var rootDemand = (Int128)CustomListOps.ClampQuantity(quantity);
-        nodes[itemId].Demand = rootDemand;
+    /// <summary>
+    /// Pushes each node's demand down to what it uses, parents before children (reverse postorder), so every node's
+    /// demand is complete before it is rounded into crafts. Returns the raw-material totals by item id ascending.
+    /// </summary>
+    private static SortedDictionary<uint, Int128> Propagate(Dictionary<uint, Node> nodes, List<uint> postorder)
+    {
         var leaves = new SortedDictionary<uint, Int128>();
         for (var k = postorder.Count - 1; k >= 0; k--)
         {
             var node = nodes[postorder[k]];
-            if (node.Edges.Count == 0 && postorder[k] != itemId)
+            if (node.IsGathered)
             {
-                // A craftable item whose recipe has nothing usable is gathered like a raw material.
                 leaves.TryGetValue(postorder[k], out var own);
                 leaves[postorder[k]] = Saturate(own + node.Demand);
                 continue;
             }
-            Int128 yield = node.Recipe.Yield < 1 ? 1 : node.Recipe.Yield;
-            var crafts = (node.Demand + yield - 1) / yield;
+            var crafts = Crafts(node);
             foreach (var (ingId, amount, isNode) in node.Edges)
             {
                 var add = (Int128)amount * crafts;
@@ -121,12 +263,16 @@ public static class RecipeExpander
                 }
             }
         }
-
-        var result = new List<Requirement>(leaves.Count);
-        foreach (var (id, total) in leaves)
-            result.Add(new Requirement(id, total > CustomListOps.MaxQuantity ? CustomListOps.MaxQuantity : (int)total));
-        return new MaterialsResult(result, null);
+        return leaves;
     }
+
+    private static Int128 Crafts(Node node)
+    {
+        Int128 yield = node.Recipe.Yield < 1 ? 1 : node.Recipe.Yield;
+        return (node.Demand + yield - 1) / yield;
+    }
+
+    private static int Clamp(Int128 value) => value > CustomListOps.MaxQuantity ? CustomListOps.MaxQuantity : (int)value;
 
     private static Int128 Saturate(Int128 value) => value > DemandCap ? DemandCap : value;
 }

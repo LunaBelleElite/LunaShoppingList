@@ -100,8 +100,17 @@ public class UniversalisClient : IUniversalisClient
             }
             first = false;
 
-            var json = await GetWithRetryAsync(BuildUrl(scope, chunk), ct).ConfigureAwait(false);
-            var parsed = UniversalisResponseParser.Parse(json, chunk);
+            IReadOnlyList<ItemListings> parsed;
+            try
+            {
+                var json = await GetWithRetryAsync(BuildUrl(scope, chunk), ct).ConfigureAwait(false);
+                parsed = UniversalisResponseParser.Parse(json, chunk);
+            }
+            catch (HttpRequestException ex) when (chunk.Count == 1 && ex.StatusCode == HttpStatusCode.NotFound)
+            {
+                // The single-item URL answers 404 for an item that cannot be sold on the market board: no listings, not a failure.
+                parsed = new[] { new ItemListings(chunk[0], Array.Empty<Listing>()) };
+            }
             var stamp = _clock();
             lock (_cacheLock)
             {

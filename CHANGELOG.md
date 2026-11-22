@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.10.0.1 - 2026-11-22
+
+This covers everything since 0.8.0.0.
+
+- The Paste tab is now Import / Export. Import takes a Teamcraft import link, an Artisan list (Artisan's Export List) or plain `Nx Item Name` lines, such as Teamcraft's Copy as Text. It says which one it found, skips section headers like "Crystals :", and lists lines it couldn't match. Then Save as shopping list (named, with an optional Break down into raw materials) or Open without saving.
+- Export: pick any list. Open in Teamcraft opens Teamcraft's import page in your browser. Copy Artisan list (My shopping lists only) copies a list that Artisan's Import List From Clipboard (Artisan Export) accepts, with every sub-craft. Share Teamcraft list copies a link to send to someone else; they open it as a website, because Teamcraft's own import dialog rejects it.
+- My shopping lists: Add with subcrafts now keeps the finished item as a goal. The shopping rows are your plain items plus the raw materials worked out from all goals together, so a part that two goals share is crafted once. Change a goal's quantity and the materials follow. Lists saved before this still work.
+- New Exclude crafted items checkbox next to Refresh on the Artisan crafting lists tab. Lists then open with crafted ingredients unticked, so you only buy raw materials.
+- New Check/uncheck all button in list windows, beside the crystals toggle.
+- Fixed: an item that can't be sold on the market board no longer breaks a price lookup. A pasted block of text could freeze the game; it doesn't any more. Item names ending in a space now match. Messages wrap in narrow windows instead of being cut off. Unloading the plugin is safer.
+- Not yet checked in the game: importing a Teamcraft link or an Artisan export back into the Import tab, Exclude crafted items, Check/uncheck all, removing goals, and old lists loading after the update.
+
 ## 0.8.0.0 - 2026-11-22
 
 - My shopping lists has a new Add with subcrafts button, beside Quantity and Add. It takes the item you picked, works out every crafting level down to the raw materials (crystals included), adds up the amounts and puts only those materials on the list. The item itself and the intermediate crafts aren't added. Where several recipes make an item, it uses the first one it finds. The button is greyed out for items that can't be crafted.

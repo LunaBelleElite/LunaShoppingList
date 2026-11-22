@@ -37,6 +37,19 @@ public sealed class CustomList
 
     private List<CustomListItem> items = new();
 
+    /// <summary>
+    /// Finished items the player wants to craft, in the order they were added. Their materials are worked out from the
+    /// recipes every time (see <see cref="CustomListOps.EffectiveRequirements"/>) and are not stored. Older settings
+    /// files have no goals; they read as empty, and the list's plain rows behave exactly as before.
+    /// </summary>
+    public List<CustomListItem> Goals
+    {
+        get => goals;
+        set => goals = value ?? new();
+    }
+
+    private List<CustomListItem> goals = new();
+
     /// <summary>Items the player unticked in the list window; kept with the list.</summary>
     public HashSet<uint> ExcludedItemIds
     {

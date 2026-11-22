@@ -50,7 +50,8 @@ internal sealed unsafe class OwnedItemsService : IDisposable
 
     private const long LiveIntervalMs = 1_000;
     private const long ExternalIntervalMs = 10_000;
-    private const int ExternalBatch = 25;
+    // Each looked-up item scans every tracked slot, so keep the per-frame batch small; a round of a few hundred items still finishes in a few seconds.
+    private const int ExternalBatch = 5;
     private const long SaveDelayMs = 5_000;
     private const long SaveRetryMs = 60_000;
     private const long WantedTtlMs = 15_000;
@@ -533,7 +534,7 @@ internal sealed unsafe class OwnedItemsService : IDisposable
 
     /// <summary>
     /// Asks AllaganTools about the items the windows show: every item once per round (every few seconds), and an item asked about
-    /// for the first time straight away. At most a batch of items per frame, so no single frame does all the work.
+    /// for the first time straight away. At most a small batch (5) of items per frame, because each lookup scans every tracked slot, so no single frame does all the work.
     /// </summary>
     private void TickExternal(long ms)
     {

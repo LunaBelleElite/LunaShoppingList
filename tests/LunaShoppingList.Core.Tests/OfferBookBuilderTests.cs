@@ -220,8 +220,12 @@ public class OfferBookBuilderTests
     }
 
     [Fact]
-    public void AveragePriceComparisonDoesNotOverflowOrRound()
+    public void ShortWorldsWithEqualUnitsAreComparedByExactCostNotARoundedAverage()
     {
+        // RENAMED 2026-11-22 (was AveragePriceComparisonDoesNotOverflowOrRound): the name claimed an overflow guard,
+        // but the "huge price" case below (3 units x ~2.1e9 gil, cross-multiplied by 3) never overflowed a long, so it
+        // pinned only the exact-cost ordering. The real overflow pin is
+        // ShortWorldsWithEqualUnitsAreOrderedByCostEvenWhenCrossMultiplyingWouldOverflowALong.
         // Both sell 3 units, need 10. World 1 ("Z") totals 3 gil, world 2 ("A") totals 4 gil: integer division would tie them
         // at 1 each and fall to the name, putting "A" first.
         var book = Build([new(1, 10)], [new(1, [L(1, 2, "A", 1, 2), L(1, 2, "A", 2, 1), L(1, 1, "Z", 1, 3)])]);
@@ -229,6 +233,24 @@ public class OfferBookBuilderTests
         // Huge prices: 3 units at int.MaxValue-ish vs 3 units one gil cheaper must compare in long.
         var big = Build([new(1, 10)], [new(1, [L(1, 1, "A", int.MaxValue, 3), L(1, 2, "B", int.MaxValue - 1, 3)])]);
         Assert.Equal([2u, 1u], WorldIds(big.Items[0]));
+    }
+
+    [Theory]
+    [InlineData("Alpha", "Beta")]
+    [InlineData("Zed", "Alpha")]
+    public void ShortWorldsWithEqualUnitsAreOrderedByCostEvenWhenCrossMultiplyingWouldOverflowALong(string dearName, string cheapName)
+    {
+        // Need 500,000; both worlds sell 11 x 9,999 = 109,989 units (short, equal). Costs ~1.1e14 and 109,989 gil.
+        // The old cross-multiplied comparison (cost * units) reached ~1.2e19 > long.MaxValue and wrapped negative,
+        // ranking the 1.1e14 world first. The cheap world must come first whichever name sorts first.
+        var listings = new List<Listing>();
+        for (int i = 0; i < 11; i++)
+        {
+            listings.Add(L(1, 1, dearName, 999_999_999, 9_999));
+            listings.Add(L(1, 2, cheapName, 1, 9_999));
+        }
+        var book = Build([new(1, 500_000)], [new(1, listings)]);
+        Assert.Equal([2u, 1u], WorldIds(book.Items[0]));
     }
 
     [Fact]

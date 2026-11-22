@@ -20,6 +20,33 @@ public sealed class LuminaRecipeData : IRecipeData, IRecipeLookup
     /// <summary>True once the item-to-recipe index exists, so <see cref="FindRecipeForItem"/> is a dictionary lookup.</summary>
     internal bool IsResultIndexReady => recipeByResult.IsValueCreated;
 
+    private readonly object warmUpGate = new();
+    private Task? warmUp;
+
+    /// <summary>
+    /// Builds the item-to-recipe index on the thread pool unless it exists or is already being built, so no game
+    /// thread waits for it. A failed build is not remembered; a later call starts it again.
+    /// </summary>
+    internal void WarmUp()
+    {
+        lock (warmUpGate)
+        {
+            if (recipeByResult.IsValueCreated || warmUp is { IsCompleted: false })
+                return;
+            warmUp = Task.Run(() =>
+            {
+                try
+                {
+                    _ = recipeByResult.Value;
+                }
+                catch
+                {
+                    // The index stays unbuilt; the caller's note stays up and a later WarmUp tries again.
+                }
+            });
+        }
+    }
+
     /// <summary>
     /// Builds an item-to-recipe index on first use (one pass over the sheet), so call it on a click, never per frame.
     /// A build that failed is not remembered: the next call tries again.

@@ -16,6 +16,7 @@ internal sealed class WindowManager : IWindowHost, IDisposable
     private readonly Configuration config;
     private readonly IArtisanListSource artisan;
     private readonly IItemInfo items;
+    private readonly IRecipeLookup recipes;
     private readonly IWorldData worlds;
     private readonly ShoppingListService service;
     private readonly MaterialsCalculator calc;
@@ -33,12 +34,13 @@ internal sealed class WindowManager : IWindowHost, IDisposable
     private int pasteCounter;
 
     public WindowManager(WindowSystem windowSystem, Configuration config, IArtisanListSource artisan, IItemInfo items,
-        IWorldData worlds, ShoppingListService service, MaterialsCalculator calc, OwnedItemsService owned, IItemSources sources, IPluginLog log)
+        IRecipeLookup recipes, IWorldData worlds, ShoppingListService service, MaterialsCalculator calc, OwnedItemsService owned, IItemSources sources, IPluginLog log)
     {
         WindowSystem = windowSystem;
         this.config = config;
         this.artisan = artisan;
         this.items = items;
+        this.recipes = recipes;
         this.worlds = worlds;
         this.service = service;
         this.calc = calc;
@@ -117,7 +119,7 @@ internal sealed class WindowManager : IWindowHost, IDisposable
     private void AddList(string key, string title, int? artisanListId, IReadOnlyList<Requirement>? requirements, string? customListId)
     {
         var session = new ShoppingSession(calc, items);
-        var window = new ListWindow(key, title, artisanListId, requirements, customListId, config, session, artisan, items, worlds, service, owned, sources, this, log);
+        var window = new ListWindow(key, title, artisanListId, requirements, customListId, config, session, artisan, items, recipes, worlds, service, owned, sources, this, log);
         listWindows[key] = window;
         window.IsOpen = true;
         pending.Enqueue(() => WindowSystem.AddWindow(window));

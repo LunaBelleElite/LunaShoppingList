@@ -24,6 +24,11 @@ public sealed class LuminaItemInfo : IItemInfo, IItemCatalog
     private readonly object warmUpGate = new();
     private Task? warmUp;
     private long warmUpStartedAt;
+    private int attempts;
+    private bool failed;
+
+    /// <summary>Most times the name index build is tried before it is given up for the session.</summary>
+    internal const int MaxAttempts = 3;
 
     public LuminaItemInfo(IDataManager data, IPluginLog log)
     {
@@ -43,6 +48,8 @@ public sealed class LuminaItemInfo : IItemInfo, IItemCatalog
         {
             if (index.IsValueCreated)
                 return true;
+            if (failed)
+                return false;
             WarmUp();
             return false;
         }
@@ -54,16 +61,18 @@ public sealed class LuminaItemInfo : IItemInfo, IItemCatalog
     /// <summary>Market-board items, one per distinct name, sorted by name then id. Empty until <see cref="IsReady"/>; never blocks.</summary>
     public IReadOnlyList<ItemSearchEntry> MarketableItems => index.IsValueCreated ? index.Value.Marketable : NoEntries;
 
-    /// <summary>Builds the name index on the thread pool unless it is built, being built, or failed only moments ago.</summary>
+    /// <summary>Builds the name index on the thread pool unless it is built, being built, has failed for good, or the last attempt started only moments ago.</summary>
     internal void WarmUp()
     {
         lock (warmUpGate)
         {
-            if (index.IsValueCreated || warmUp is { IsCompleted: false })
+            if (index.IsValueCreated || failed || warmUp is { IsCompleted: false })
                 return;
-            if (warmUp != null && Environment.TickCount64 - warmUpStartedAt < 10_000)
+            if (attempts > 0 && Environment.TickCount64 - warmUpStartedAt < 10_000)
                 return;
             warmUpStartedAt = Environment.TickCount64;
+            attempts++;
+            var attempt = attempts;
             warmUp = Task.Run(() =>
             {
                 try
@@ -72,7 +81,16 @@ public sealed class LuminaItemInfo : IItemInfo, IItemCatalog
                 }
                 catch (Exception ex)
                 {
-                    log.Error(ex, "Building the item name index failed");
+                    if (attempt >= MaxAttempts)
+                    {
+                        lock (warmUpGate)
+                            failed = true;
+                        log.Error(ex, "Building the item name index failed {Attempts} times; item names stay unavailable this session", attempt);
+                    }
+                    else
+                    {
+                        log.Warning(ex, "Building the item name index failed (attempt {Attempt} of {Max}); it will be tried again", attempt, MaxAttempts);
+                    }
                 }
             });
         }
@@ -120,7 +138,8 @@ public sealed class LuminaItemInfo : IItemInfo, IItemCatalog
         var market = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
         foreach (var row in items)
         {
-            var name = row.Name.ToString();
+            // Trimmed, because FindByName trims what it is asked for; a few rows end in a space.
+            var name = row.Name.ToString().Trim();
             if (string.IsNullOrEmpty(name))
                 continue;
             // First row wins, except a row that has a recipe replaces one that does not.

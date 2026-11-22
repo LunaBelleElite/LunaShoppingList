@@ -8,7 +8,7 @@ asks Universalis what everything costs right now. You get each item once, with
 the worlds selling it, and you decide where to buy what. If you'd rather not
 decide, it will suggest a plan, and the route and totals keep up as you change
 quantities. The ingredient list also shows how many of each item you already
-hold.
+hold. It can also bring in a Teamcraft list and send one back out.
 
 It doesn't travel for you and it doesn't buy anything. It tells you where to
 go. The walking is yours.
@@ -33,14 +33,17 @@ people you trust.
 
 ## How to use each part
 
-Type `/lsl` and the list browser opens, with three tabs. Pick a list from any
-of them and it gets its own window. Build in that window opens a results
-window. You can have several of each open at once.
+Type `/lsl` and the list browser opens, with three tabs: Artisan crafting
+lists, My shopping lists and Import / Export. Pick a list and it gets its own
+window. Build in that window opens a results window. You can have several of
+each open at once.
 
 **Artisan crafting lists tab.** Your Artisan lists are shown here.
 
 - Click one to open it. Type in the filter box to narrow the names.
 - Refresh re-reads them from Artisan.
+- Tick **Exclude crafted items** and lists open with every crafted ingredient
+  unticked, so you only buy raw materials. You can still tick things yourself.
 
 **My shopping lists tab.** Lists you put together yourself.
 
@@ -48,27 +51,38 @@ window. You can have several of each open at once.
 2. Select it, type an item name and pick it from the suggestions. Only items
    that sell on the market board are offered.
 3. Set the quantity. **Add** puts the item itself on the list, to buy as it is.
-   **Add with subcrafts** works out every level of crafting down to the raw
-   materials, crystals included, adds up the amounts and puts only those
-   materials on the list, not the item or the crafts in between. Where several
-   recipes make an item it uses the first one it finds, and the button is greyed
-   out for anything that can't be crafted. Items a vendor also sells are still
-   broken down all the way.
-4. Change a quantity in the row, or press Remove to take the row off.
+   **Add with subcrafts** keeps the finished item as a goal, and the list works
+   out the raw materials for all your goals together, crystals included. A
+   part that two goals share is crafted once. Where several recipes make an
+   item it uses the first one it finds, and the button is greyed out for
+   anything that can't be crafted.
+4. Change a quantity in a row or a goal and the materials follow. Remove takes
+   a row or goal off. The materials section is worked out for you, so you can't
+   edit it.
 5. Rename and Delete sit beside the list's name; Delete asks you to click
    twice. **Shop for this list** opens it.
 
-**Paste tab.** Artisan has an export button for a plain-text ingredient list;
-paste what it gives you into the box and press Parse. Lines it couldn't match
-are listed, and **Open as shopping list** opens the rest. A pasted list isn't
-saved, so closing its window drops it.
+**Import / Export tab.** Brings a list in from Teamcraft or Artisan, or sends
+one out.
+
+- Import: paste a Teamcraft import link, an Artisan list (Artisan's **Export
+  List**) or plain `3x Item Name` lines, such as Teamcraft's **Copy as Text**,
+  and press Parse. It tells you which one it found, and lists any lines it
+  couldn't match.
+- Then **Save as shopping list** (give it a name; tick **Break down into raw
+  materials** if you want the crafts worked out), or **Open without saving**.
+- Export: pick one of your lists. **Open in Teamcraft** opens Teamcraft's
+  import page in your browser. **Copy Artisan list** (My shopping lists only)
+  copies every sub-craft, ready for Artisan's **Import List From Clipboard
+  (Artisan Export)**. **Share Teamcraft list** copies a link to send to someone
+  else; they open it in a browser, not in Teamcraft's import dialog.
 
 **A list window.** This is where you decide what to price.
 
 - **Where to shop** sets the worlds you're willing to buy from. It's one choice
   shared by every list window.
-- Untick **Buy** on anything you don't need. Your choices are remembered for
-  Artisan and My shopping lists.
+- Untick **Buy** on anything you don't need. **Check/uncheck all** ticks or
+  unticks every row at once. Your choices are remembered for Artisan and My shopping lists.
 - **On you** and **Retainers** show how many you already hold; hover Retainers
   to see which retainer has it. The **Vendor** column shows when an NPC also
   sells the item; hover it for the vendor and where they stand. Drag a column
@@ -122,10 +136,12 @@ I haven't compared the worlds the cross data center choice lists with what the
 game actually lets you visit. Getting to another region needs the
 game's own Data Center Travel, which the plugin doesn't do for you.
 
-I haven't tried pasting Artisan's plain-text export myself, so picking a list
-is the better-trodden way in. The same goes for skipping items, the
-stale-listing marker, the short-by and over-by notes, Reload list, closing
-windows with Esc or a gamepad, and updating the plugin. If any of those
+I haven't tried importing a Teamcraft link or an Artisan export back into the
+Import tab, so going the other way (Open in Teamcraft, Copy Artisan list) is
+the better-trodden direction. The same goes for the Exclude crafted items
+checkbox, Check/uncheck all, removing goals, old lists still loading after an
+update, the stale-listing marker, the short-by and over-by notes, Reload list,
+closing windows with Esc or a gamepad, and updating the plugin. If any of those
 misbehaves, I'd like to hear about it.
 
 ## Why the numbers can be a little off
@@ -154,6 +170,7 @@ version 3, which you'll find in the `LICENSE` file. Copyright 2026 LunaBelleElit
 Prices come from [Universalis](https://universalis.app), a community-run market
 board service. Thanks to the people who keep it running.
 
+Teamcraft and Artisan are separate projects; this isn't affiliated with either.
 It isn't affiliated with or endorsed by Square Enix. Final Fantasy is a
 trademark of Square Enix.
 

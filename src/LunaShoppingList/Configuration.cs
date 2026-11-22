@@ -12,6 +12,12 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Excluded item ids per Artisan list id.</summary>
     public Dictionary<int, HashSet<uint>> ExcludedItemsByList { get; set; } = new();
 
+    /// <summary>
+    /// When true, an Artisan list opens with every ingredient that has a recipe unticked, on top of its saved choices.
+    /// A settings file without the member loads as false.
+    /// </summary>
+    public bool ExcludeCraftedItems { get; set; }
+
     public TravelScopeKind LastScope { get; set; } = TravelScopeKind.CrossWorld;
 
     /// <summary>Last chosen Artisan list id, or null if none.</summary>

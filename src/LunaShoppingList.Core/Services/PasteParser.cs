@@ -2,10 +2,13 @@ using System.Text.RegularExpressions;
 
 namespace LunaShoppingList.Core;
 
-/// <summary>Parses pasted Artisan "Export Remaining Ingredients" text ("Nx Item Name" lines).</summary>
+/// <summary>Parses pasted Artisan "Export Remaining Ingredients" text ("Nx Item Name" lines); Teamcraft section headers ending in " :" are skipped silently.</summary>
 public static class PasteParser
 {
-    private static readonly Regex LinePattern = new(@"^\s*([0-9]+)\s*[xX\u00D7]\s*(\S.*?)\s*$", RegexOptions.CultureInvariant);
+    // Matched against the TRIMMED line: a trailing \s* after a lazy name backtracked quadratically on long whitespace runs.
+    private static readonly Regex LinePattern = new(@"^([0-9]+)\s*[xX\u00D7]\s*(\S.*)$", RegexOptions.CultureInvariant);
+    // Section headers from Teamcraft's "Copy as Text" ("Crystals :", "Pre_crafts :"): text, a space, a colon.
+    private static readonly Regex HeaderPattern = new(@"^\s*\S.* :\s*$", RegexOptions.CultureInvariant);
     private static readonly Regex Whitespace = new(@"\s+", RegexOptions.CultureInvariant);
 
     /// <summary>Parses pasted text into requirements.</summary>
@@ -23,7 +26,10 @@ public static class PasteParser
             if (string.IsNullOrWhiteSpace(line))
                 continue;
 
-            var m = LinePattern.Match(line);
+            var m = LinePattern.Match(line.Trim());
+            if (!m.Success && HeaderPattern.IsMatch(line))
+                continue;
+
             if (!m.Success
                 || !int.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var qty)
                 || qty <= 0)

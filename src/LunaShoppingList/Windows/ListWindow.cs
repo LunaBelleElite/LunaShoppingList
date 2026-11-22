@@ -11,14 +11,18 @@ namespace LunaShoppingList.Windows;
 public sealed class ListWindow : Window, IDisposable
 {
     private const string UnreadableConfigText = "Couldn't read Artisan's config, try again in a moment.";
-    private const string NotStoredText = "This list is not stored in Artisan's config (premade/relic lists cannot be read). Use Paste ingredients instead.";
+    private const string NotStoredText = "This list is not stored in Artisan's config (premade/relic lists cannot be read). Use the Import / Export tab instead.";
     private const string CustomListGoneText = "This shopping list no longer exists.";
+    private const string CraftedPendingText = "Crafted items will be unticked once recipe data has loaded - press Reload list.";
+    private const string GoalsPendingText = "Materials for the goals will appear once recipe data has loaded - press Reload list.";
     private const string FootnoteText = "Prices are from Universalis, exclude market tax, and may be out of date. This plugin does not travel for you.";
     private const string OpenedText = "Shopping list opened in its own window.";
     private const string NoRetainerDataText = "Open each retainer once to count what they hold.";
     private const string ListChangedCancelledText = "The list changed, so the running build was cancelled.";
+    private const string ListChangedDiscardedText = "The list changed, so the finished build was discarded.";
 
     private static readonly Vector4 WarningColor = new(1f, 0.6f, 0.3f, 1f);
+    private static readonly Vector4 DimColor = new(0.6f, 0.6f, 0.6f, 1f);
     private static readonly Vector4 ErrorColor = new(1f, 0.4f, 0.4f, 1f);
     private static readonly Vector4 EnoughColor = new(0.45f, 0.85f, 0.45f, 1f);
 
@@ -31,6 +35,7 @@ public sealed class ListWindow : Window, IDisposable
     private readonly ShoppingSession session;
     private readonly IArtisanListSource artisan;
     private readonly IItemInfo items;
+    private readonly IRecipeLookup recipes;
     private readonly IWorldData worlds;
     private readonly ShoppingListService service;
     private readonly OwnedItemsService owned;
@@ -40,6 +45,13 @@ public sealed class ListWindow : Window, IDisposable
 
     // UI-thread state.
     private string sourceMessage = string.Empty;
+
+    // True when the Exclude crafted items option was on but the recipe index was not built yet, so nothing was unticked.
+    private bool craftedPending;
+    // True when a custom list has goals but the recipe index was not built yet, so only its plain rows were loaded.
+    private bool goalsPending;
+    // Goals whose materials could not be worked out (custom lists only); shown as warning lines.
+    private IReadOnlyList<GoalProblem> goalProblems = [];
     private List<Requirement> rows = [];
     private readonly Dictionary<uint, string> names = new();
 
@@ -78,6 +90,7 @@ public sealed class ListWindow : Window, IDisposable
         ShoppingSession session,
         IArtisanListSource artisan,
         IItemInfo items,
+        IRecipeLookup recipes,
         IWorldData worlds,
         ShoppingListService service,
         OwnedItemsService owned,
@@ -98,6 +111,7 @@ public sealed class ListWindow : Window, IDisposable
         this.session = session;
         this.artisan = artisan;
         this.items = items;
+        this.recipes = recipes;
         this.worlds = worlds;
         this.service = service;
         this.owned = owned;
@@ -182,6 +196,9 @@ public sealed class ListWindow : Window, IDisposable
     private void LoadList()
     {
         sourceMessage = string.Empty;
+        craftedPending = false;
+        goalsPending = false;
+        goalProblems = [];
         try
         {
             if (artisanListId is int id)
@@ -194,6 +211,8 @@ public sealed class ListWindow : Window, IDisposable
                 else
                 {
                     session.LoadFromList(list, config.ExcludedItemsByList.TryGetValue(id, out var saved) ? saved : []);
+                    if (config.ExcludeCraftedItems)
+                        ApplyExcludeCrafted();
                 }
             }
             else if (customListId != null)
@@ -211,7 +230,7 @@ public sealed class ListWindow : Window, IDisposable
                         title = saved.Name;
                         WindowName = title + "###lsl-list-" + key;
                     }
-                    session.LoadFromPaste(new PasteResult(CustomListOps.ToRequirements(saved), []));
+                    session.LoadFromPaste(new PasteResult(LoadCustomRequirements(saved), []));
                     session.ImportExclusions(saved.ExcludedItemIds);
                 }
             }
@@ -234,17 +253,55 @@ public sealed class ListWindow : Window, IDisposable
     }
 
     /// <summary>
+    /// The saved list's plain rows plus the materials of its goals. The recipe index is never built here (that would stall
+    /// the UI thread): with goals and no index yet this starts the build in the background, loads the plain rows only and
+    /// leaves a note to press Reload list.
+    /// </summary>
+    private IReadOnlyList<Requirement> LoadCustomRequirements(CustomList saved)
+    {
+        if (saved.Goals.Count == 0)
+            return CustomListOps.ToRequirements(saved);
+        if (recipes is LuminaRecipeData { IsResultIndexReady: false } data)
+        {
+            data.WarmUp();
+            goalsPending = true;
+            return CustomListOps.ToRequirements(saved);
+        }
+        var effective = CustomListOps.EffectiveRequirements(saved, recipes);
+        goalProblems = effective.Problems;
+        return effective.Requirements;
+    }
+
+    /// <summary>
+    /// Unticks the ingredients that have a recipe. The recipe index is never built here (that would stall the UI thread):
+    /// while it is not ready this only starts building it in the background and leaves a note to press Reload list.
+    /// </summary>
+    private void ApplyExcludeCrafted()
+    {
+        if (recipes is LuminaRecipeData { IsResultIndexReady: false } data)
+        {
+            data.WarmUp();
+            craftedPending = true;
+            return;
+        }
+        session.ExcludeCrafted(recipes);
+    }
+
+    /// <summary>
     /// Reads the saved custom list again (name, items and exclusions); a running build is cancelled and its outcome
     /// discarded, and the window says so.
     /// </summary>
     internal void ReloadCustomList()
     {
         var wasBuilding = building;
+        bool hadPending;
+        lock (buildGate)
+            hadPending = pendingBook != null;
         LoadList();
-        if (wasBuilding)
+        if (wasBuilding || hadPending)
         {
             lock (buildGate)
-                progressText = ListChangedCancelledText;
+                progressText = wasBuilding ? ListChangedCancelledText : ListChangedDiscardedText;
         }
     }
 
@@ -297,7 +354,27 @@ public sealed class ListWindow : Window, IDisposable
                 LoadList();
         }
         if (sourceMessage.Length > 0)
-            ImGui.TextColored(WarningColor, sourceMessage);
+            WrappedColored(WarningColor, sourceMessage);
+        if (craftedPending)
+            WrappedColored(DimColor, CraftedPendingText);
+        if (goalsPending)
+            WrappedColored(DimColor, GoalsPendingText);
+        foreach (var problem in goalProblems)
+            WrappedColored(WarningColor, $"{Name(problem.ItemId)}: {problem.Error}");
+    }
+
+    /// <summary>Coloured text that wraps at the window edge instead of being cut off.</summary>
+    private static void WrappedColored(Vector4 color, string text)
+    {
+        ImGui.PushTextWrapPos(0f);
+        try
+        {
+            ImGui.TextColored(color, text);
+        }
+        finally
+        {
+            ImGui.PopTextWrapPos();
+        }
     }
 
     // ---- Scope ----
@@ -330,6 +407,12 @@ public sealed class ListWindow : Window, IDisposable
             return;
         }
 
+        if (ImGui.Button("Check/uncheck all"))
+        {
+            session.SetAllIncluded(!session.AreAllIncluded);
+            PersistExclusions();
+        }
+        ImGui.SameLine();
         if (ImGui.Button("Toggle all crystals/shards/clusters"))
         {
             session.SetCrystalsExcluded(!session.AreAllCrystalsExcluded);
@@ -627,10 +710,18 @@ public sealed class ListWindow : Window, IDisposable
         if (progressText.Length > 0)
         {
             ImGui.SameLine();
-            ImGui.TextUnformatted(progressText);
+            ImGui.PushTextWrapPos(0f);
+            try
+            {
+                ImGui.TextUnformatted(progressText);
+            }
+            finally
+            {
+                ImGui.PopTextWrapPos();
+            }
         }
         if (errorText.Length > 0)
-            ImGui.TextColored(ErrorColor, errorText);
+            WrappedColored(ErrorColor, errorText);
     }
 
     private void StartBuild()

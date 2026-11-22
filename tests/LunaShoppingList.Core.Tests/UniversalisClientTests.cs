@@ -270,8 +270,10 @@ public class UniversalisClientTests
     [Fact]
     public async Task Failed_fetch_is_not_cached()
     {
+        // SUPERSEDED 2026-11-22: was HttpStatusCode.NotFound; a 404 for a single-id chunk is now "no listings", so a
+        // different non-transient status (BadRequest) drives the failure.
         var (c, http, _, _) = Make();
-        http.Responder = (_, _) => throw new HttpRequestException("boom", null, HttpStatusCode.NotFound);
+        http.Responder = (_, _) => throw new HttpRequestException("boom", null, HttpStatusCode.BadRequest);
         await Assert.ThrowsAsync<HttpRequestException>(() => c.GetListingsAsync(new uint[] { 10 }, "Crystal", CancellationToken.None));
         http.Responder = null;
         var r = await c.GetListingsAsync(new uint[] { 10 }, "Crystal", CancellationToken.None);
@@ -314,12 +316,73 @@ public class UniversalisClientTests
     [InlineData(HttpStatusCode.Forbidden)]
     public async Task Non_transient_status_propagates_without_retry(HttpStatusCode code)
     {
+        // SUPERSEDED 2026-11-22: this theory used ONE id ({ 10 }); a 404 for a single-id chunk now means "item not
+        // sellable on the market board" and no longer propagates (see Single_id_404_*). It now uses TWO ids so the 404
+        // arm is still pinned on a multi-id chunk, which keeps today's behaviour.
+        var (c, http, delays, _) = Make();
+        http.Responder = (_, _) => throw new HttpRequestException("no", null, code);
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => c.GetListingsAsync(new uint[] { 10, 20 }, "Crystal", CancellationToken.None));
+        Assert.Single(http.Urls);
+        Assert.Empty(delays);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task Non_404_non_transient_status_on_a_single_id_chunk_still_propagates(HttpStatusCode code)
+    {
         var (c, http, delays, _) = Make();
         http.Responder = (_, _) => throw new HttpRequestException("no", null, code);
 
         await Assert.ThrowsAsync<HttpRequestException>(() => c.GetListingsAsync(new uint[] { 10 }, "Crystal", CancellationToken.None));
         Assert.Single(http.Urls);
         Assert.Empty(delays);
+    }
+
+    [Fact]
+    public async Task Single_id_404_means_no_listings_for_that_item_not_a_failed_build()
+    {
+        // Universalis answers 404 on the single-item URL for an item that cannot be sold on the market board.
+        var (c, http, delays, _) = Make();
+        http.Responder = (_, _) => throw new HttpRequestException("not sellable", null, HttpStatusCode.NotFound);
+
+        var r = await c.GetListingsAsync(new uint[] { 10 }, "Crystal", CancellationToken.None);
+
+        var entry = Assert.Single(r);
+        Assert.Equal(10u, entry.ItemId);
+        Assert.Empty(entry.Listings);
+        Assert.Single(http.Urls);   // not retried
+        Assert.Empty(delays);
+
+        // Decision: an empty answer is not cached (same as any item with no listings), so it is asked again.
+        await c.GetListingsAsync(new uint[] { 10 }, "Crystal", CancellationToken.None);
+        Assert.Equal(2, http.Urls.Count);
+    }
+
+    [Fact]
+    public async Task Last_chunk_of_a_single_unsellable_id_does_not_fail_the_whole_request_nor_a_repeat()
+    {
+        // 101 ids split 100 + 1; the last (single-id URL) is unsellable and answers 404.
+        var (c, http, _, _) = Make();
+        http.Responder = (url, _) => FakeHttp.IdsIn(url).Count == 1
+            ? throw new HttpRequestException("not sellable", null, HttpStatusCode.NotFound)
+            : FakeHttp.Generate(url);
+        var ids = Range(1, 101);
+
+        var r = await c.GetListingsAsync(ids, "Crystal", CancellationToken.None);
+
+        Assert.Equal(ids, r.Select(x => x.ItemId).ToArray());
+        Assert.All(r.Take(100), x => Assert.Single(x.Listings));
+        Assert.Empty(r[100].Listings);
+        Assert.Equal(2, http.Urls.Count);
+
+        // Repeat build: the 100 are cached, only the leftover uncached item is fetched (single-id again) and still survives.
+        var again = await c.GetListingsAsync(ids, "Crystal", CancellationToken.None);
+        Assert.Equal(101, again.Count);
+        Assert.Empty(again[100].Listings);
+        Assert.Equal(3, http.Urls.Count);
+        Assert.Equal(new uint[] { 101 }, FakeHttp.IdsIn(http.Urls[2]).ToArray());
     }
 
     [Fact]

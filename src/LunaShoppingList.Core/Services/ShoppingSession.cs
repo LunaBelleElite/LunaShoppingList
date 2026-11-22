@@ -59,6 +59,28 @@ public sealed class ShoppingSession
         foreach (var id in excluded) Exclusions.ExcludedItemIds.Add(id);
     }
 
+    /// <summary>
+    /// Unticks every ingredient that has a recipe (<paramref name="recipes"/> finds one), on top of the exclusions already
+    /// set; nothing is ever re-included. Crystals, shards and clusters are never touched.
+    /// </summary>
+    /// <param name="recipes">Finds the recipe that makes an item.</param>
+    public void ExcludeCrafted(IRecipeLookup recipes)
+    {
+        ArgumentNullException.ThrowIfNull(recipes);
+        var crafted = _requirements
+            .Where(r => !_items.IsCrystalLike(r.ItemId) && recipes.FindRecipeForItem(r.ItemId) != null)
+            .Select(r => r.ItemId)
+            .ToList();
+        Exclusions.ExcludeAll(crafted, true);
+    }
+
+    /// <summary>Includes or excludes every current requirement, crystals too; exclusions for items not in the list are kept.</summary>
+    /// <param name="included">True to buy everything, false to skip everything.</param>
+    public void SetAllIncluded(bool included) => Exclusions.ExcludeAll(_requirements.Select(r => r.ItemId).ToList(), !included);
+
+    /// <summary>True only if there is at least one requirement and all of them are included.</summary>
+    public bool AreAllIncluded => _requirements.Count > 0 && _requirements.All(r => IsIncluded(r.ItemId));
+
     /// <summary>Replaces the requirements with pasted ones and clears all exclusions (paste choices are not remembered).</summary>
     /// <param name="paste">The parsed paste.</param>
     public void LoadFromPaste(PasteResult paste)

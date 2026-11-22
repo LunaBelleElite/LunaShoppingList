@@ -7,18 +7,31 @@ using LunaShoppingList.Core;
 
 namespace LunaShoppingList.Windows;
 
-/// <summary>The entry window: pick one of Artisan's saved lists, or paste ingredients, and open it as its own shopping-list window.</summary>
+/// <summary>The entry window: pick one of Artisan's saved lists, build your own, or import and export lists, and open them as their own shopping-list windows.</summary>
 public sealed class ListBrowserWindow : Window
 {
     private const string NoListsText = "Artisan not found or no lists";
     private const string UnreadableConfigText = "Couldn't read Artisan's config, try again in a moment.";
     private const string LoadingNamesText = "Loading item names...";
-    private const string PasteHelpText = "In Artisan, open the Ingredients tab and choose 'Export Required Ingredients as Plain Text' "
-        + "(hold Shift for the full 'Required' amounts rather than 'Remaining'), then paste the result here.";
+    private const string ImportHelpText = "Paste a Teamcraft import link, an Artisan list copied with Export List, or lines like 3x Iron Ore.";
+    private const string BreakdownTooltip = "Replaces each craftable item with the materials needed to make it, like Add with subcrafts. Items that can't be crafted stay as they are.";
+    private const string ChooseListFirstText = "Choose a list first.";
+    private const string ArtisanAlreadyText = "This list is already in Artisan.";
+    private const string NothingToExportText = "Nothing to export: the list is empty.";
     private const int PasteMaxLength = 50000;
+    private const int MaxSkippedNames = 8;
+    private const string CutOffText = "The text was cut off at the size limit, so the last items may be missing or wrong.";
+    // The box buffer holds PasteMaxLength bytes including the closing NUL, so the text itself may use one less.
+    private const int PasteMaxTextBytes = PasteMaxLength - 1;
+    private const int NearCapBytes = 8;
     private const int SearchMaxLength = 100;
     private const int SearchResultCount = 10;
-    private const string AddWithSubcraftsTooltip = "Adds everything needed to craft this, down to the materials you gather or buy. The item itself is not added. Where several recipes make an item, the first recipe found is used.";
+    private const string AddWithSubcraftsTooltip = "Keeps the finished item as a goal on this list and works out the materials down to raw materials, so the list can be exported to Artisan with its subcrafts. The item itself is not a shopping row. Where several recipes make an item, the first recipe found is used.";
+    private const string GoalsNoteText = "The materials for these goals are added to the shopping list automatically.";
+    private const string RecipesLoadingText = "Recipe data is still loading...";
+    private const string TeamcraftLinkHintText = "Share Teamcraft list copies a link to send to someone else. They should open it as a website (paste it into the browser's address bar), not try to import it in Teamcraft's import dialog.";
+    private const string ShareTeamcraftTooltip = "Copies the Teamcraft link so you can send it to another person. They open it as a website; it does not work in Teamcraft's own import dialog. To use it yourself, press Open in Teamcraft instead.";
+    private const string ExcludeCraftedTooltip = "When on, Artisan lists open with crafted ingredients (anything that has a recipe) unticked, so you only buy the raw materials. Your own ticks still win.";
     private const string NotCraftableText = "This item cannot be crafted";
     // The text boxes count UTF-8 bytes; the 60-character name limit itself is checked when the name is used.
     private const int NameBoxMaxBytes = CustomListOps.MaxNameLength * 4;
@@ -28,6 +41,7 @@ public sealed class ListBrowserWindow : Window
     private readonly IItemInfo items;
     private readonly IItemCatalog catalog;
     private readonly IRecipeLookup recipes;
+    private readonly IRecipeData recipeData;
     private readonly WindowManager manager;
     private readonly IPluginLog log;
 
@@ -39,6 +53,25 @@ public sealed class ListBrowserWindow : Window
     private string pasteText = string.Empty;
     private IReadOnlyList<string> unmatchedLines = [];
     private IReadOnlyList<Requirement> parsed = [];
+    // Import / Export tab. The parse state resets when the box text no longer matches what was parsed.
+    private bool importParsed;
+    private string parsedFromText = string.Empty;
+    private ImportKind importKind;
+    private string? importError;
+    private string importName = string.Empty;
+    private bool importCut;
+    // The clipboard text as cut by Paste from clipboard, to recognise it still in the box when Parse is pressed.
+    private string? clipboardCutText;
+    // True while 'message' came from Parse, so a changed box can clear it.
+    private bool messageFromParse;
+    private bool importBreakdown;
+    // The export selection: a My shopping list by id, or an Artisan list by id (never both).
+    private string? exportCustomId;
+    private int? exportArtisanId;
+    // Green note and orange side note of the Import / Export tab; cleared by every SetMessage.
+    private string ioNotice = string.Empty;
+    private string ioWarn = string.Empty;
+    private bool ioInImport;
 
     // 'My shopping lists' tab state. Everything below belongs to the selected list and is reset when the selection changes.
     private string newListName = string.Empty;
@@ -60,9 +93,14 @@ public sealed class ListBrowserWindow : Window
     private bool? pickedCraftable;
     // A success note shown in the message area until the next action.
     private string notice = string.Empty;
+    // The materials of the selected list's goals, worked out only when the goals, the selection or the recipe index
+    // change (never per frame: working them out looks up recipes). Null while there are no goals or the index is loading.
+    private EffectiveRequirementsResult? materials;
+    private bool materialsDirty = true;
+    private bool materialsWarmRequested;
 
     internal ListBrowserWindow(Configuration config, IArtisanListSource artisan, IItemInfo items, IItemCatalog catalog,
-        IRecipeLookup recipes, WindowManager manager, IPluginLog log)
+        IRecipeLookup recipes, IRecipeData recipeData, WindowManager manager, IPluginLog log)
         : base("Luna Shopping List##LunaShoppingListBrowser")
     {
         this.config = config;
@@ -70,6 +108,7 @@ public sealed class ListBrowserWindow : Window
         this.items = items;
         this.catalog = catalog;
         this.recipes = recipes;
+        this.recipeData = recipeData;
         this.manager = manager;
         this.log = log;
         Size = new Vector2(380, 560);
@@ -127,16 +166,21 @@ public sealed class ListBrowserWindow : Window
                         notice = string.Empty;
                         FlushUnsaved();
                     }
-                    if (ImGui.BeginTabItem("Paste"))
+                    if (ImGui.BeginTabItem("Import / Export###lslImportExport"))
                     {
                         try
                         {
-                            DrawPaste();
+                            DrawImportExport();
                         }
                         finally
                         {
                             ImGui.EndTabItem();
                         }
+                    }
+                    else
+                    {
+                        ioNotice = string.Empty;
+                        ioWarn = string.Empty;
                     }
                 }
                 finally
@@ -152,13 +196,30 @@ public sealed class ListBrowserWindow : Window
         }
 
         if (message.Length > 0)
-            ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f), message);
+            WrappedColored(new Vector4(1f, 0.6f, 0.3f, 1f), message);
+    }
+
+    /// <summary>Coloured text that wraps at the window edge instead of being cut off.</summary>
+    private static void WrappedColored(Vector4 color, string text)
+    {
+        ImGui.PushTextWrapPos(0f);
+        try
+        {
+            ImGui.TextColored(color, text);
+        }
+        finally
+        {
+            ImGui.PopTextWrapPos();
+        }
     }
 
     private void SetMessage(string text)
     {
         message = text;
+        messageFromParse = false;
         notice = string.Empty;
+        ioNotice = string.Empty;
+        ioWarn = string.Empty;
     }
 
     private void DrawMyLists()
@@ -199,8 +260,27 @@ public sealed class ListBrowserWindow : Window
         }
 
         if (ImGui.Button("Refresh")) RefreshLists();
+        ImGui.SameLine();
+        var excludeCrafted = config.ExcludeCraftedItems;
+        if (ImGui.Checkbox("Exclude crafted items", ref excludeCrafted))
+        {
+            config.ExcludeCraftedItems = excludeCrafted;
+            config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(ExcludeCraftedTooltip);
         if (hiddenCount > 0 && lists.Count > 0)
-            ImGui.TextDisabled($"{hiddenCount} lists are hidden: lists that are not in Artisan's saved config (premade lists, or lists not saved yet). To use one, paste its ingredients.");
+        {
+            ImGui.PushTextWrapPos(0f);
+            try
+            {
+                ImGui.TextDisabled($"{hiddenCount} lists are hidden: lists that are not in Artisan's saved config (premade lists, or lists not saved yet). To use one, paste its ingredients.");
+            }
+            finally
+            {
+                ImGui.PopTextWrapPos();
+            }
+        }
     }
 
     private void RefreshLists()
@@ -228,7 +308,7 @@ public sealed class ListBrowserWindow : Window
     {
         DrawCustomListsBody();
         if (notice.Length > 0)
-            ImGui.TextColored(new Vector4(0.5f, 0.9f, 0.5f, 1f), notice);
+            WrappedColored(new Vector4(0.5f, 0.9f, 0.5f, 1f), notice);
     }
 
     private void DrawCustomListsBody()
@@ -287,7 +367,9 @@ public sealed class ListBrowserWindow : Window
                     try
                     {
                         var count = l.Items.Count;
-                        if (SelectableText("##row", $"{l.Name}  ({count} {(count == 1 ? "item" : "items")})", l.Id == selectedListId))
+                        var goalCount = l.Goals.Count;
+                        var goalText = goalCount > 0 ? $", {goalCount} {(goalCount == 1 ? "goal" : "goals")}" : string.Empty;
+                        if (SelectableText("##row", $"{l.Name}  ({count} {(count == 1 ? "item" : "items")}{goalText})", l.Id == selectedListId))
                             clicked = l.Id;
                     }
                     finally
@@ -314,7 +396,7 @@ public sealed class ListBrowserWindow : Window
             ImGui.TextUnformatted(list.Name);
 
         var avail = ImGui.GetContentRegionAvail().X;
-        ImGui.BeginDisabled(list.Items.Count == 0);
+        ImGui.BeginDisabled(list.Items.Count == 0 && list.Goals.Count == 0);
         try
         {
             if (ImGui.Button("Shop for this list"))
@@ -469,12 +551,162 @@ public sealed class ListBrowserWindow : Window
     private void DrawListItems(CustomList list)
     {
         ImGui.Spacing();
-        if (list.Items.Count == 0)
+        if (list.Items.Count == 0 && list.Goals.Count == 0)
         {
             ImGui.TextDisabled("This list is empty: search for an item above and press Add.");
             return;
         }
 
+        if (list.Goals.Count > 0)
+            DrawGoals(list);
+        if (list.Items.Count > 0)
+        {
+            if (list.Goals.Count > 0)
+                ImGui.TextUnformatted("Items");
+            DrawItemRows(list);
+        }
+        if (list.Goals.Count > 0)
+            DrawMaterials(list);
+    }
+
+    private void DrawGoals(CustomList list)
+    {
+        ImGui.TextUnformatted("Goals");
+        uint removeId = 0;
+        var commitQuantity = false;
+        var tableOpen = ImGui.BeginTable("##customGoals", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Resizable);
+        try
+        {
+            if (tableOpen)
+            {
+                var style = ImGui.GetStyle();
+                var padding = style.CellPadding.X * 2;
+                ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch, 1f);
+                ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed,
+                    ImGui.CalcTextSize("9,999,999").X + style.FramePadding.X * 2 + (ImGui.GetFrameHeight() + style.ItemInnerSpacing.X) * 2 + padding);
+                ImGui.TableSetupColumn("##actions", ImGuiTableColumnFlags.WidthFixed, ButtonWidth("Remove") + padding);
+                ImGui.TableHeadersRow();
+
+                // Goals are only read here; a removal is applied after the loop.
+                for (var i = 0; i < list.Goals.Count; i++)
+                {
+                    var goal = list.Goals[i];
+                    ImGui.PushID((int)goal.ItemId);
+                    try
+                    {
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        ImGui.TextUnformatted(ItemName(goal.ItemId));
+
+                        ImGui.TableNextColumn();
+                        ImGui.SetNextItemWidth(-1);
+                        var qty = goal.Quantity;
+                        var changed = ImGui.InputInt("##goalQty", ref qty, 1, 100);
+                        if (changed)
+                        {
+                            CustomListOps.SetGoalQuantity(list, goal.ItemId, qty);
+                            unsavedListId = list.Id;
+                            notice = string.Empty;
+                            InvalidateMaterials();
+                        }
+                        // Typed edits are saved when the box is left; a step-button click is saved at once.
+                        if (ImGui.IsItemDeactivatedAfterEdit() || (changed && !ImGui.IsItemActive()))
+                            commitQuantity = true;
+
+                        ImGui.TableNextColumn();
+                        if (ImGui.SmallButton("Remove"))
+                            removeId = goal.ItemId;
+                    }
+                    finally
+                    {
+                        ImGui.PopID();
+                    }
+                }
+            }
+        }
+        finally
+        {
+            if (tableOpen)
+                ImGui.EndTable();
+        }
+        PushWrappedDim(GoalsNoteText);
+
+        if (commitQuantity)
+            Commit(list);
+        if (removeId != 0)
+            RemoveGoal(list, removeId);
+    }
+
+    /// <summary>The goals' materials, read-only, in a collapsible section. Never worked out here: see <see cref="GetMaterials"/>.</summary>
+    private void DrawMaterials(CustomList list)
+    {
+        var result = GetMaterials(list);
+        if (result == null)
+        {
+            PushWrappedDim(RecipesLoadingText);
+            return;
+        }
+        foreach (var problem in result.Problems)
+            WrappedColored(new Vector4(1f, 0.6f, 0.3f, 1f), $"{ItemName(problem.ItemId)}: {problem.Error}");
+        if (ImGui.CollapsingHeader($"Materials from goals ({result.Requirements.Count})###goalMaterials"))
+        {
+            foreach (var r in result.Requirements)
+                ImGui.BulletText($"{ItemName(r.ItemId)} x{r.Quantity}");
+        }
+    }
+
+    /// <summary>The goals or the selection changed: the materials are worked out again the next time they are drawn.</summary>
+    private void InvalidateMaterials()
+    {
+        materials = null;
+        materialsDirty = true;
+        materialsWarmRequested = false;
+    }
+
+    private static void PushWrappedDim(string text)
+    {
+        ImGui.PushTextWrapPos(0f);
+        try
+        {
+            ImGui.TextDisabled(text);
+        }
+        finally
+        {
+            ImGui.PopTextWrapPos();
+        }
+    }
+
+    /// <summary>
+    /// The goals' materials, or null while there are no goals or the recipe index is still loading (a background build is
+    /// started, and the result is worked out as soon as it is ready). The work is repeated only after a goal, the
+    /// selection or the index changed, so a drawn frame is a field read.
+    /// </summary>
+    private EffectiveRequirementsResult? GetMaterials(CustomList list)
+    {
+        if (list.Goals.Count == 0)
+            return null;
+        if (recipes is LuminaRecipeData { IsResultIndexReady: false } data)
+        {
+            if (!materialsWarmRequested)
+            {
+                data.WarmUp();
+                materialsWarmRequested = true;
+            }
+            materials = null;
+            materialsDirty = true;
+            return null;
+        }
+        if (materialsDirty || materials == null)
+        {
+            // Only the goals matter here: the plain rows are shown as they are, so they are left out of the sum.
+            materials = CustomListOps.EffectiveRequirements(new CustomList { Id = list.Id, Goals = list.Goals }, recipes);
+            materialsDirty = false;
+        }
+        return materials;
+    }
+
+    private void DrawItemRows(CustomList list)
+    {
         uint removeId = 0;
         var commitQuantity = false;
         var tableOpen = ImGui.BeginTable("##customItems", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Resizable);
@@ -559,6 +791,7 @@ public sealed class ListBrowserWindow : Window
         FlushUnsaved();
         notice = string.Empty;
         selectedListId = id;
+        InvalidateMaterials();
         renaming = false;
         renameText = string.Empty;
         deletePending = false;
@@ -597,18 +830,30 @@ public sealed class ListBrowserWindow : Window
 
     private void CreateList()
     {
+        if (CreateNamedList(newListName, null) != null)
+            newListName = string.Empty;
+    }
+
+    /// <summary>
+    /// Creates, fills (with <paramref name="rows"/>, when given), adds, saves and selects a new list. On a name error the
+    /// message is shown and nothing changes; returns null.
+    /// </summary>
+    private CustomList? CreateNamedList(string name, IReadOnlyList<Requirement>? rows)
+    {
         deletePending = false;
-        var result = CustomListOps.Create(config.CustomLists, newListName);
+        var result = CustomListOps.Create(config.CustomLists, name);
         if (result.List is not { } created)
         {
             SetMessage(result.Error ?? "Could not create the list");
-            return;
+            return null;
         }
         SetMessage(string.Empty);
+        if (rows != null)
+            CustomListOps.AddMaterials(created, rows);
         config.CustomLists.Add(created);
         config.Save();
-        newListName = string.Empty;
         SelectList(created.Id);
+        return created;
     }
 
     private void SaveRename(CustomList list)
@@ -665,28 +910,52 @@ public sealed class ListBrowserWindow : Window
         deletePending = false;
         SetMessage(string.Empty);
         CustomListOps.RemoveItem(list, itemId);
-        CustomListOps.PruneExclusions(list);
+        PruneExclusions(list);
         Commit(list);
+    }
+
+    private void RemoveGoal(CustomList list, uint itemId)
+    {
+        deletePending = false;
+        SetMessage(string.Empty);
+        CustomListOps.RemoveGoal(list, itemId);
+        InvalidateMaterials();
+        PruneExclusions(list);
+        Commit(list);
+    }
+
+    /// <summary>
+    /// Drops unticked ids that are no longer rows. With goals the rows depend on the recipes, so while the recipe index is
+    /// still loading this only starts the background build and skips (a stale id is harmless and goes at the next prune);
+    /// otherwise a click would build the index on the UI thread.
+    /// </summary>
+    private void PruneExclusions(CustomList list)
+    {
+        if (list.Goals.Count > 0 && recipes is LuminaRecipeData { IsResultIndexReady: false } data)
+        {
+            data.WarmUp();
+            return;
+        }
+        CustomListOps.PruneExclusions(list, recipes);
     }
 
     private void AddPickedWithSubcrafts(CustomList list)
     {
         deletePending = false;
         SetMessage(string.Empty);
-        // The recipe expansion runs here, on the click, never per frame.
+        // The recipe expansion runs here, on the click, never per frame. It checks that the item can be expanded before the goal is stored.
         var result = RecipeExpander.ExpandToMaterials(recipes, pickedItemId, addQuantity);
         if (!result.Ok)
         {
             SetMessage(result.Error ?? "Could not add the materials");
             return;
         }
-        var added = CustomListOps.AddMaterials(list, result.Items!);
-        CustomListOps.PruneExclusions(list);
+        CustomListOps.AddGoal(list, pickedItemId, addQuantity);
+        InvalidateMaterials();
+        PruneExclusions(list);
         Commit(list);
         var count = result.Items!.Count;
-        notice = added == 0
-            ? "Nothing added: every material is already at the maximum."
-            : $"Added {count} {(count == 1 ? "material" : "materials")} for {ItemName(pickedItemId)} x{addQuantity}";
+        notice = $"Added {ItemName(pickedItemId)} x{addQuantity} as a goal ({count} {(count == 1 ? "material" : "materials")})";
         ClearPicked();
         searchText = string.Empty;
         addQuantity = 1;
@@ -697,6 +966,7 @@ public sealed class ListBrowserWindow : Window
     {
         if (unsavedListId == list.Id)
             unsavedListId = null;
+        InvalidateMaterials();
         config.Save();
         manager.RefreshCustomList(list.Id);
     }
@@ -775,10 +1045,44 @@ public sealed class ListBrowserWindow : Window
         }
     }
 
-    private void DrawPaste()
+    private void DrawImportExport()
     {
-        ImGui.TextWrapped(PasteHelpText);
-        ImGui.InputTextMultiline("##paste", ref pasteText, PasteMaxLength, new Vector2(-1, 160));
+        DrawImport();
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+        DrawExport();
+    }
+
+    private void DrawIoMessages(bool forImport)
+    {
+        if (ioInImport != forImport)
+            return;
+        if (ioNotice.Length > 0)
+            WrappedColored(new Vector4(0.5f, 0.9f, 0.5f, 1f), ioNotice);
+        if (ioWarn.Length > 0)
+            WrappedColored(new Vector4(1f, 0.6f, 0.3f, 1f), ioWarn);
+    }
+
+    private void DrawImport()
+    {
+        ImGui.TextUnformatted("Import");
+        ImGui.PushTextWrapPos(0f);
+        try
+        {
+            ImGui.TextDisabled(ImportHelpText);
+        }
+        finally
+        {
+            ImGui.PopTextWrapPos();
+        }
+        ImGui.InputTextMultiline("##paste", ref pasteText, PasteMaxLength, new Vector2(-1, 110));
+        if ((importParsed || messageFromParse) && !string.Equals(pasteText, parsedFromText, StringComparison.Ordinal))
+            ResetParsed();
+
+        if (ImGui.Button("Paste from clipboard"))
+            PasteFromClipboard();
+        ImGui.SameLine();
 
         // The name index takes a while to build; never build it on the draw thread.
         var namesReady = items is not LuminaItemInfo lumina || lumina.IsNameIndexReady;
@@ -797,36 +1101,140 @@ public sealed class ListBrowserWindow : Window
             ImGui.TextDisabled(LoadingNamesText);
         }
 
+        if (importParsed)
+        {
+            ImGui.TextDisabled($"Detected: {KindLabel(importKind)} - {parsed.Count} {(parsed.Count == 1 ? "item" : "items")}");
+            if (importError != null)
+                ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f), importError);
+            if (importCut)
+            {
+                ImGui.PushTextWrapPos(0f);
+                try
+                {
+                    ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f), CutOffText);
+                }
+                finally
+                {
+                    ImGui.PopTextWrapPos();
+                }
+            }
+        }
+
         if (unmatchedLines.Count > 0 && ImGui.CollapsingHeader($"Unmatched lines ({unmatchedLines.Count})###unmatched"))
         {
             foreach (var line in unmatchedLines)
                 ImGui.BulletText(line);
         }
 
+        if (parsed.Count > 0)
+        {
+            ImGui.SetNextItemWidth(-1);
+            ImGui.InputTextWithHint("##importName", "Name for the saved list...", ref importName, NameBoxMaxBytes);
+            ImGui.Checkbox("Break down into raw materials", ref importBreakdown);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(BreakdownTooltip);
+        }
+
         ImGui.BeginDisabled(parsed.Count == 0);
         try
         {
-            if (ImGui.Button("Open as shopping list")) OpenParsed();
+            if (ImGui.Button("Save as shopping list")) SaveImported();
+            ImGui.SameLine();
+            if (ImGui.Button("Open without saving")) OpenParsed();
         }
         finally
         {
             ImGui.EndDisabled();
         }
+        DrawIoMessages(true);
+    }
+
+    private static string KindLabel(ImportKind kind) => kind switch
+    {
+        ImportKind.TeamcraftLink => "Teamcraft link",
+        ImportKind.ArtisanList => "Artisan list",
+        _ => "Item list",
+    };
+
+    private void ResetParsed()
+    {
+        importParsed = false;
+        parsed = [];
+        unmatchedLines = [];
+        importError = null;
+        importCut = false;
+        if (messageFromParse)
+            SetMessage(string.Empty);
+        ioNotice = string.Empty;
+        ioWarn = string.Empty;
+    }
+
+    private void PasteFromClipboard()
+    {
+        try
+        {
+            var clip = TextLimit.CutToBytes(ImGui.GetClipboardText() ?? string.Empty, PasteMaxTextBytes, out var wasCut);
+            clipboardCutText = wasCut ? clip : null;
+            pasteText = clip;
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Reading the clipboard failed");
+            SetMessage("Could not read the clipboard: " + ex.Message);
+        }
     }
 
     private void ParsePaste()
     {
+        parsedFromText = pasteText;
         try
         {
             SetMessage(string.Empty);
-            var result = PasteParser.Parse(pasteText, items);
+            var result = ImportParser.Parse(pasteText, items, recipeData);
             parsed = result.Requirements;
-            unmatchedLines = result.UnmatchedLines;
+            unmatchedLines = result.Unmatched;
+            importKind = result.Kind;
+            importError = result.Error;
+            importName = TextLimit.CutToChars(result.SuggestedName, CustomListOps.MaxNameLength);
+            importCut = (clipboardCutText != null && string.Equals(pasteText, clipboardCutText, StringComparison.Ordinal))
+                || System.Text.Encoding.UTF8.GetByteCount(pasteText) >= PasteMaxTextBytes - NearCapBytes;
+            parsedFromText = pasteText;
+            importParsed = true;
         }
         catch (Exception ex)
         {
-            log.Error(ex, "Parsing pasted ingredients failed");
+            log.Error(ex, "Parsing the pasted text failed");
             SetMessage("Could not parse the text: " + ex.Message);
+            messageFromParse = true;
+        }
+    }
+
+    /// <summary>The parsed rows, or their raw materials when the box is ticked (computed on the click, never per frame).</summary>
+    private IReadOnlyList<Requirement> ImportRows()
+        => importBreakdown ? CustomListOps.Breakdown(recipes, parsed) : parsed;
+
+    private void SaveImported()
+    {
+        try
+        {
+            SetMessage(string.Empty);
+            var rows = ImportRows();
+            if (rows.Count == 0)
+            {
+                SetMessage("Nothing to save.");
+                return;
+            }
+            var list = CreateNamedList(importName, rows);
+            if (list == null)
+                return;
+            var count = list.Items.Count;
+            ioInImport = true;
+            ioNotice = $"Saved {count} {(count == 1 ? "item" : "items")} as {list.Name}";
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Saving the imported list failed");
+            SetMessage("Could not save the list: " + ex.Message);
         }
     }
 
@@ -835,7 +1243,7 @@ public sealed class ListBrowserWindow : Window
         try
         {
             SetMessage(string.Empty);
-            manager.OpenPasted(parsed);
+            manager.OpenPasted(ImportRows());
         }
         catch (Exception ex)
         {
@@ -843,4 +1251,285 @@ public sealed class ListBrowserWindow : Window
             SetMessage("Could not open the list: " + ex.Message);
         }
     }
+
+    private void DrawExport()
+    {
+        ImGui.TextUnformatted("Export");
+
+        // A selection whose list is gone (deleted, or no longer in Artisan) falls back to none.
+        if (exportCustomId != null && config.FindCustomList(exportCustomId) == null)
+            exportCustomId = null;
+        var artisanName = exportArtisanId is { } aid ? ArtisanListName(aid) : null;
+        if (exportArtisanId != null && artisanName == null)
+            exportArtisanId = null;
+        var customName = exportCustomId != null ? config.FindCustomList(exportCustomId)?.Name : null;
+
+        ImGui.SetNextItemWidth(-1);
+        var preview = customName ?? (artisanName != null ? "Artisan: " + artisanName : "Export which list");
+        if (ImGui.BeginCombo("##exportList", preview))
+        {
+            try
+            {
+                DrawExportChoices();
+            }
+            finally
+            {
+                ImGui.EndCombo();
+            }
+        }
+        if (lists.Count == 0)
+            ImGui.TextDisabled("No Artisan lists are shown (Artisan not found, or its config could not be read).");
+
+        var selected = exportCustomId != null || exportArtisanId != null;
+        var isArtisan = exportArtisanId != null;
+
+        ImGui.BeginDisabled(!selected);
+        try
+        {
+            if (ImGui.Button("Open in Teamcraft")) OpenTeamcraftLink();
+        }
+        finally
+        {
+            ImGui.EndDisabled();
+        }
+        if (!selected && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(ChooseListFirstText);
+
+        ImGui.SameLine();
+        ImGui.BeginDisabled(!selected || isArtisan);
+        try
+        {
+            if (ImGui.Button("Copy Artisan list")) CopyArtisanList();
+        }
+        finally
+        {
+            ImGui.EndDisabled();
+        }
+        if ((!selected || isArtisan) && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(isArtisan ? ArtisanAlreadyText : ChooseListFirstText);
+
+        ImGui.SameLine();
+        ImGui.BeginDisabled(!selected);
+        try
+        {
+            if (ImGui.Button("Share Teamcraft list")) CopyTeamcraftLink();
+        }
+        finally
+        {
+            ImGui.EndDisabled();
+        }
+        if (!selected && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(ChooseListFirstText);
+        else if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(ShareTeamcraftTooltip);
+
+        ImGui.PushTextWrapPos(0f);
+        try
+        {
+            ImGui.TextDisabled(TeamcraftLinkHintText);
+        }
+        finally
+        {
+            ImGui.PopTextWrapPos();
+        }
+
+        DrawIoMessages(false);
+    }
+
+    private void DrawExportChoices()
+    {
+        var custom = config.CustomLists;
+        if (custom.Count > 0)
+        {
+            ImGui.TextDisabled("My shopping lists");
+            for (var i = 0; i < custom.Count; i++)
+            {
+                var l = custom[i];
+                if (l is null)
+                    continue;
+                ImGui.PushID("c" + l.Id);
+                try
+                {
+                    if (SelectableText("##row", l.Name, exportCustomId == l.Id))
+                        SelectExport(l.Id, null);
+                }
+                finally
+                {
+                    ImGui.PopID();
+                }
+            }
+        }
+        if (lists.Count > 0)
+        {
+            ImGui.TextDisabled("Artisan lists");
+            foreach (var l in lists)
+            {
+                ImGui.PushID("a" + l.Id);
+                try
+                {
+                    if (SelectableText("##row", l.Name, exportArtisanId == l.Id))
+                        SelectExport(null, l.Id);
+                }
+                finally
+                {
+                    ImGui.PopID();
+                }
+            }
+        }
+        if (custom.Count == 0 && lists.Count == 0)
+            ImGui.TextDisabled("No lists to export.");
+    }
+
+    private void SelectExport(string? customId, int? artisanId)
+    {
+        exportCustomId = customId;
+        exportArtisanId = artisanId;
+        SetMessage(string.Empty);
+    }
+
+    private string? ArtisanListName(int id)
+    {
+        foreach (var l in lists)
+            if (l.Id == id)
+                return l.Name;
+        return null;
+    }
+
+    /// <summary>The rows and name of the selected list, or null (with a message shown) when they cannot be read. Runs on the click only.</summary>
+    private (IReadOnlyList<Requirement> Rows, string Name)? ExportRows()
+    {
+        if (exportCustomId != null)
+        {
+            var list = config.FindCustomList(exportCustomId);
+            if (list == null)
+            {
+                SetMessage("That list no longer exists.");
+                return null;
+            }
+            // The goals and the plain rows, not the goals' materials: Teamcraft gets the finished items, Artisan the craft tree.
+            return (CustomListOps.ExportRows(list), list.Name);
+        }
+        if (exportArtisanId is { } id)
+        {
+            try
+            {
+                var list = artisan.LoadList(id);
+                if (list == null)
+                {
+                    SetMessage("That Artisan list was not found.");
+                    return null;
+                }
+                return (ArtisanListItems.CraftedItems(list, recipeData), list.Name);
+            }
+            catch (ArtisanConfigUnreadableException ex)
+            {
+                log.Warning(ex, "Reading an Artisan list failed");
+                SetMessage(UnreadableConfigText);
+                return null;
+            }
+        }
+        SetMessage(ChooseListFirstText);
+        return null;
+    }
+
+    private void CopyTeamcraftLink()
+    {
+        try
+        {
+            SetMessage(string.Empty);
+            if (ExportRows() is not { } source)
+                return;
+            var link = TeamcraftLink.Build(source.Rows);
+            if (link == null)
+            {
+                SetMessage(NothingToExportText);
+                return;
+            }
+            ImGui.SetClipboardText(link);
+            ioInImport = false;
+            ioNotice = $"Copied a Teamcraft link for {source.Rows.Count} {(source.Rows.Count == 1 ? "item" : "items")}.";
+            if (link.Length > TeamcraftLink.LongLinkWarningLength)
+                ioWarn = "This link is very long. Some browsers may refuse it.";
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Copying a Teamcraft link failed");
+            SetMessage("Could not copy the link: " + ex.Message);
+        }
+    }
+
+    private void OpenTeamcraftLink()
+    {
+        try
+        {
+            SetMessage(string.Empty);
+            if (ExportRows() is not { } source)
+                return;
+            var link = TeamcraftLink.Build(source.Rows);
+            if (link == null)
+            {
+                SetMessage(NothingToExportText);
+                return;
+            }
+            if (!TeamcraftLink.IsSafeWebLink(link))
+            {
+                SetMessage("Could not open the link: it is not a web address.");
+                return;
+            }
+            Dalamud.Utility.Util.OpenLink(link);
+            ioInImport = false;
+            ioNotice = $"Opened Teamcraft with {source.Rows.Count} {(source.Rows.Count == 1 ? "item" : "items")}.";
+            if (link.Length > TeamcraftLink.LongLinkWarningLength)
+                ioWarn = "This link is very long. Some browsers may refuse it.";
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Opening a Teamcraft link failed");
+            SetMessage("Could not open the link: " + ex.Message);
+        }
+    }
+
+    private void CopyArtisanList()
+    {
+        try
+        {
+            SetMessage(string.Empty);
+            if (ExportRows() is not { } source)
+                return;
+            if (source.Rows.Count == 0)
+            {
+                SetMessage(NothingToExportText);
+                return;
+            }
+            var result = ArtisanListExport.Build(source.Name, source.Rows, recipes);
+            if (result.Error != null)
+            {
+                SetMessage(result.Error);
+                return;
+            }
+            if (result.Json.Length == 0)
+            {
+                SetMessage("None of these items can be crafted, so there is nothing to give Artisan.");
+                return;
+            }
+            ImGui.SetClipboardText(result.Json);
+            ioInImport = false;
+            ioNotice = $"Copied an Artisan list with {result.CraftedItems} {(result.CraftedItems == 1 ? "item" : "items")}.";
+            if (result.SkippedItemIds.Count > 0)
+                ioWarn = SkippedText(result.SkippedItemIds);
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Copying an Artisan list failed");
+            SetMessage("Could not copy the list: " + ex.Message);
+        }
+    }
+
+    private string SkippedText(IReadOnlyList<uint> ids)
+    {
+        var names = string.Join(", ", ids.Take(MaxSkippedNames).Select(ItemName));
+        var more = ids.Count > MaxSkippedNames ? $", +{ids.Count - MaxSkippedNames} more" : string.Empty;
+        return $"{ids.Count} {(ids.Count == 1 ? "item" : "items")} can't be crafted and {(ids.Count == 1 ? "was" : "were")} left out: {names}{more}";
+    }
+
 }
