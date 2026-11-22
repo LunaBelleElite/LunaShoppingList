@@ -1,5 +1,6 @@
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
+using LunaShoppingList.Adapters;
 using LunaShoppingList.Core;
 
 namespace LunaShoppingList.Windows;
@@ -16,6 +17,7 @@ internal sealed class WindowManager : IWindowHost, IDisposable
     private readonly IWorldData worlds;
     private readonly ShoppingListService service;
     private readonly MaterialsCalculator calc;
+    private readonly OwnedItemsService owned;
     private readonly IPluginLog log;
 
     private readonly Dictionary<string, ListWindow> listWindows = new();
@@ -28,7 +30,7 @@ internal sealed class WindowManager : IWindowHost, IDisposable
     private int pasteCounter;
 
     public WindowManager(WindowSystem windowSystem, Configuration config, IArtisanListSource artisan, IItemInfo items,
-        IWorldData worlds, ShoppingListService service, MaterialsCalculator calc, IPluginLog log)
+        IWorldData worlds, ShoppingListService service, MaterialsCalculator calc, OwnedItemsService owned, IPluginLog log)
     {
         WindowSystem = windowSystem;
         this.config = config;
@@ -37,6 +39,7 @@ internal sealed class WindowManager : IWindowHost, IDisposable
         this.worlds = worlds;
         this.service = service;
         this.calc = calc;
+        this.owned = owned;
         this.log = log;
     }
 
@@ -65,23 +68,23 @@ internal sealed class WindowManager : IWindowHost, IDisposable
     private void AddList(string key, string title, int? artisanListId, IReadOnlyList<Requirement>? requirements)
     {
         var session = new ShoppingSession(calc, items);
-        var window = new ListWindow(key, title, artisanListId, requirements, config, session, artisan, items, worlds, service, this, log);
+        var window = new ListWindow(key, title, artisanListId, requirements, config, session, artisan, items, worlds, service, owned, this, log);
         listWindows[key] = window;
         window.IsOpen = true;
         pending.Enqueue(() => WindowSystem.AddWindow(window));
     }
 
     /// <inheritdoc />
-    public void ShowResults(string key, string title, OfferBook book)
+    public void ShowResults(string key, string title, OfferBook book, IReadOnlyList<PlanOption> options)
     {
         if (resultsWindows.TryGetValue(key, out var existing))
         {
-            existing.Update(book);
+            existing.Update(book, options);
             existing.IsOpen = true;
             existing.BringToFront();
             return;
         }
-        var window = new ResultsWindow(key, title + " - shopping list", book, items, OnResultsClosed);
+        var window = new ResultsWindow(key, title + " - shopping list", book, options, items, OnResultsClosed);
         resultsWindows[key] = window;
         window.IsOpen = true;
         pending.Enqueue(() => WindowSystem.AddWindow(window));

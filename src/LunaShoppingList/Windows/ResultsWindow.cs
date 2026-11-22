@@ -5,7 +5,7 @@ using LunaShoppingList.Core;
 
 namespace LunaShoppingList.Windows;
 
-/// <summary>The results of a Build for one list: per item the total needed and a choice of worlds, plus the route and the two suggestions.</summary>
+/// <summary>The results of a Build for one list: per item the total needed and a choice of worlds, plus the route and the trade-off between worlds and gil.</summary>
 public sealed class ResultsWindow : Window
 {
     /// <summary>A listing last reviewed longer ago than this is marked stale.</summary>
@@ -28,23 +28,30 @@ public sealed class ResultsWindow : Window
     private readonly HashSet<uint> showAll = new();
     private readonly HashSet<(uint, uint)> pinnedRows = new();
 
+    private const int VisibleOptionRows = 8;
+
     private OfferBook book;
     private AllocationState state = null!;
-    private IReadOnlyList<AllocationLine> cheapestLines = Array.Empty<AllocationLine>();
-    private IReadOnlyList<AllocationLine> fewestLines = Array.Empty<AllocationLine>();
-    private SuggestionComparison comparison = null!;
     private RouteSummary? summary;
     private Dictionary<uint, Row[]> rows = new();
-    private SuggestionMode lastMode = SuggestionMode.Cheapest;
     private bool refreshNotice;
     private bool dirty = true;
     private bool closedReported;
+
+    // The trade-off control: the options for the current book, the remembered budget (gil), the slider's value in the active unit,
+    // and the option currently applied (null once the user edits a quantity by hand).
+    private IReadOnlyList<PlanOption> planOptions = Array.Empty<PlanOption>();
+    private long budget;
+    private int sliderValue;
+    private bool percentUnit = true;
+    private PlanOption? applied;
+    private bool planOpen = true;
 
     /// <summary>
     /// Creates the window. <paramref name="key"/> is the list's key (also used for the window id), <paramref name="onClosed"/> is called
     /// with it when the user closes the window.
     /// </summary>
-    internal ResultsWindow(string key, string title, OfferBook book, IItemInfo items, Action<string> onClosed)
+    internal ResultsWindow(string key, string title, OfferBook book, IReadOnlyList<PlanOption> options, IItemInfo items, Action<string> onClosed)
         : base(title + "###lsl-results-" + key)
     {
         this.key = key;
@@ -55,51 +62,57 @@ public sealed class ResultsWindow : Window
         SizeCondition = ImGuiCond.FirstUseEver;
         // Escape must not close the window while the user is typing in a quantity box.
         RespectCloseHotkey = false;
-        Commit(Compute(book));
+        Commit(Compute(book, options));
     }
 
     /// <summary>
-    /// Replaces the offers shown (a new Build for the same list). The user's manual changes are reset and the plan they last applied
-    /// (the cheapest plan until they press a plan button) is applied again to the new offers; a notice says so until they edit a
-    /// quantity or press a plan button.
+    /// Replaces the offers shown (a new Build for the same list). The user's manual changes are reset and the plan within the
+    /// remembered budget is applied again to the new options; a notice says so until they edit a quantity or use the trade-off control.
     /// </summary>
-    internal void Update(OfferBook book)
+    internal void Update(OfferBook book, IReadOnlyList<PlanOption> options)
     {
         // Everything is computed first; if that throws, the previous book, rows and state stay as they were.
-        Commit(Compute(book));
+        Commit(Compute(book, options));
         refreshNotice = true;
     }
 
     /// <summary>Everything derived from one book, computed without touching the window's fields.</summary>
     private sealed record Computed(
         OfferBook Book,
+        IReadOnlyList<PlanOption> Options,
+        PlanOption? Applied,
         AllocationState State,
-        SuggestionComparison Comparison,
-        IReadOnlyList<AllocationLine> Cheapest,
-        IReadOnlyList<AllocationLine> Fewest,
         Dictionary<uint, Row[]> Rows,
         Dictionary<uint, bool> OpenItems,
         HashSet<uint> Present);
 
-    private Computed Compute(OfferBook b)
+    private Computed Compute(OfferBook b, IReadOnlyList<PlanOption> options)
     {
-        var cheapest = Suggester.Suggest(b, SuggestionMode.Cheapest);
-        var fewest = Suggester.Suggest(b, SuggestionMode.FewestWorlds);
-        var cmp = RouteSummarizer.Compare(b, cheapest, fewest);
         var s = new AllocationState(b);
-        s.Apply(lastMode == SuggestionMode.FewestWorlds ? fewest : cheapest);
+        PlanOption? pick = null;
+        if (options.Count > 0)
+        {
+            pick = PlanFrontier.Pick(options, budget);
+            s.Apply(pick!.Lines);
+        }
+        else
+        {
+            s.Apply(Suggester.Suggest(b, SuggestionMode.Cheapest));
+        }
         var (map, open, present) = PrecomputeRows(b);
-        return new Computed(b, s, cmp, cheapest, fewest, map, open, present);
+        return new Computed(b, options, pick, s, map, open, present);
     }
 
     private void Commit(Computed c)
     {
         book = c.Book;
+        planOptions = c.Options;
+        applied = c.Applied;
         state = c.State;
-        comparison = c.Comparison;
-        cheapestLines = c.Cheapest;
-        fewestLines = c.Fewest;
         rows = c.Rows;
+        if (planOptions.Count > 0)
+            budget = Math.Min(budget, planOptions.Max(o => o.ExtraGil));
+        sliderValue = Math.Min(BudgetToSlider(budget), SliderMax());
         foreach (var id in openItems.Keys.Where(id => !c.Present.Contains(id)).ToList())
             openItems.Remove(id);
         foreach (var (id, open) in c.OpenItems)
@@ -171,12 +184,41 @@ public sealed class ResultsWindow : Window
         return summary;
     }
 
-    private void Apply(SuggestionMode mode)
+    private void ApplyOption(PlanOption option)
     {
-        lastMode = mode;
         refreshNotice = false;
-        state.Apply(mode == SuggestionMode.FewestWorlds ? fewestLines : cheapestLines);
+        applied = option;
+        pinnedRows.Clear();
+        state.Apply(option.Lines);
         dirty = true;
+    }
+
+    private long CheapestTotal => planOptions.Count > 0 ? planOptions[0].Total : 0;
+
+    private int SliderMax()
+    {
+        if (planOptions.Count == 0)
+            return 1;
+        if (percentUnit)
+            return (int)Math.Clamp(Math.Ceiling(planOptions.Max(o => o.ExtraPercent)), 1, 100000);
+        return (int)Math.Clamp(planOptions.Max(o => o.ExtraGil), 1, int.MaxValue);
+    }
+
+    private long SliderToBudget(int value)
+        => percentUnit ? (long)Math.Floor(CheapestTotal * (double)value / 100.0) : value;
+
+    private int BudgetToSlider(long gil)
+    {
+        if (!percentUnit)
+            return (int)Math.Clamp(gil, 0, int.MaxValue);
+        return CheapestTotal <= 0 ? 0 : (int)Math.Clamp(Math.Round(gil * 100.0 / CheapestTotal), 0, 100000);
+    }
+
+    private void SetBudgetFromOption(PlanOption option)
+    {
+        budget = option.ExtraGil;
+        sliderValue = Math.Min(BudgetToSlider(budget), SliderMax());
+        ApplyOption(option);
     }
 
     /// <inheritdoc />
@@ -214,26 +256,13 @@ public sealed class ResultsWindow : Window
 
     private void DrawHeader()
     {
-        var c = comparison.Cheapest;
-        var f = comparison.FewestWorlds;
-
         if (refreshNotice)
-        {
-            var modeText = lastMode == SuggestionMode.FewestWorlds ? "fewest-worlds" : "cheapest";
-            ImGui.TextDisabled($"Prices were refreshed; the {modeText} plan was re-applied. Manual changes were reset.");
-        }
+            ImGui.TextDisabled($"Prices were refreshed; the plan within +{budget:N0} gil was re-applied. Manual changes were reset.");
 
-        if (ImGui.Button($"Use cheapest plan ({c.WorldCount} worlds, {c.GrandTotal:N0} gil)###useCheapest"))
-            Apply(SuggestionMode.Cheapest);
-
-        ImGui.SameLine();
-
-        var extra = comparison.ExtraGilForFewestWorlds;
-        var saved = comparison.WorldsSaved;
-        var extraText = extra > 0 ? $"+{extra:N0} gil" : extra == 0 ? "no extra cost" : $"{-extra:N0} gil cheaper";
-        var savedText = saved > 0 ? $"saves {saved:N0} worlds" : saved == 0 ? "same number of worlds" : $"{-saved:N0} more worlds";
-        if (ImGui.Button($"Use fewest-worlds plan ({f.WorldCount} worlds, {extraText}, {savedText})###useFewest"))
-            Apply(SuggestionMode.FewestWorlds);
+        if (planOptions.Count == 0)
+            ImGui.TextDisabled("Trade-off options are not available for this list.");
+        else
+            DrawTradeOff();
 
         var s = CurrentSummary();
         ImGui.TextUnformatted($"Your choices: {s.WorldCount} worlds to visit, {s.GrandTotal:N0} gil in total");
@@ -241,6 +270,163 @@ public sealed class ResultsWindow : Window
         {
             ImGui.SameLine();
             ImGui.TextColored(Red, $"{s.Unmet.Count} items not fully covered");
+        }
+    }
+
+    private void DrawTradeOff()
+    {
+        var best = PlanFrontier.Pick(planOptions, budget);
+        var label = applied != null
+            ? $"Plan options: {applied.WorldCount:N0} worlds, +{applied.ExtraGil:N0} gil ({applied.Total:N0} total)###planOptions"
+            : "Plan options: edited by hand###planOptions";
+        ImGui.SetNextItemOpen(planOpen);
+        planOpen = ImGui.CollapsingHeader(label);
+        if (!planOpen)
+            return;
+
+        var style = ImGui.GetStyle();
+        var spacing = style.ItemSpacing.X;
+
+        // Row 1: label, slider filling the width, value text, unit switch.
+        const string Caption = "Willing to pay extra";
+        var valueText = percentUnit ? $"+{sliderValue}% (up to +{budget:N0} gil)" : $"+{budget:N0} gil";
+        var valueW = ImGui.CalcTextSize(valueText).X;
+        var radioW = ImGui.GetFrameHeight() + style.ItemInnerSpacing.X;
+        var unitW = radioW * 2 + ImGui.CalcTextSize("%").X + ImGui.CalcTextSize("gil").X + spacing;
+        ImGui.TextDisabled(Caption);
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(Math.Max(80f, ImGui.GetContentRegionAvail().X - valueW - unitW - spacing * 2));
+        var value = sliderValue;
+        if (ImGui.SliderInt("##budget", ref value, 0, SliderMax(), "", ImGuiSliderFlags.AlwaysClamp))
+        {
+            value = Math.Clamp(value, 0, SliderMax());
+            sliderValue = value;
+            budget = SliderToBudget(value);
+            var pick = PlanFrontier.Pick(planOptions, budget);
+            if (pick != null && !ReferenceEquals(pick, applied))
+                ApplyOption(pick);
+        }
+        ImGui.SameLine();
+        ImGui.TextUnformatted(valueText);
+        ImGui.SameLine();
+        if (ImGui.RadioButton("%###unitPercent", percentUnit) && !percentUnit)
+        {
+            percentUnit = true;
+            sliderValue = Math.Min(BudgetToSlider(budget), SliderMax());
+        }
+        ImGui.SameLine();
+        if (ImGui.RadioButton("gil###unitGil", !percentUnit) && percentUnit)
+        {
+            percentUnit = false;
+            sliderValue = Math.Min(BudgetToSlider(budget), SliderMax());
+        }
+
+        // Row 2: the readout in a green box.
+        if (best != null)
+            DrawGreenBox($"Fewest worlds within that: {best.WorldCount:N0} worlds, +{best.ExtraGil:N0} gil ({best.Total:N0} total)");
+
+        DrawOptionList();
+
+        if (ImGui.Button("Reset to cheapest###resetCheapest"))
+            SetBudgetFromOption(planOptions[0]);
+        ImGui.TextDisabled("These are good plans found by a fast search, not proven to be the lowest possible.");
+        ImGui.TextDisabled("Your own quantity changes below still override the plan.");
+    }
+
+    private static void DrawGreenBox(string text)
+    {
+        const float Pad = 6f;
+        var pos = ImGui.GetCursorScreenPos();
+        var local = ImGui.GetCursorPos();
+        var width = ImGui.GetContentRegionAvail().X;
+        var textH = ImGui.CalcTextSize(text, false, width - Pad * 2).Y;
+        var size = new Vector2(width, textH + Pad * 2);
+        var dl = ImGui.GetWindowDrawList();
+        dl.AddRectFilled(pos, pos + size, ImGui.GetColorU32(new Vector4(0.2f, 0.6f, 0.3f, 0.28f)), 4f);
+        dl.AddRect(pos, pos + size, ImGui.GetColorU32(new Vector4(0.3f, 0.75f, 0.4f, 0.9f)), 4f, ImDrawFlags.None, 1f);
+        ImGui.SetCursorPos(new Vector2(local.X + Pad, local.Y + Pad));
+        ImGui.PushTextWrapPos(local.X + width - Pad);
+        try
+        {
+            ImGui.TextUnformatted(text);
+        }
+        finally
+        {
+            ImGui.PopTextWrapPos();
+        }
+        ImGui.SetCursorPos(local);
+        ImGui.Dummy(size);
+    }
+
+    private void DrawOptionList()
+    {
+        var style = ImGui.GetStyle();
+        var rowH = ImGui.GetTextLineHeight() + 6f;
+        var height = Math.Min(planOptions.Count, VisibleOptionRows) * (rowH + style.ItemSpacing.Y) + style.WindowPadding.Y * 2;
+        var maxExtra = planOptions.Max(o => o.ExtraGil);
+        const float Pad = 8f;
+        var leftW = ImGui.CalcTextSize("000 worlds").X;
+        var rightW = ImGui.CalcTextSize("+99,999,999 gil").X;
+        var accent = ImGui.GetColorU32(ImGuiCol.ButtonActive);
+        var selectedBg = ImGui.GetColorU32(ImGuiCol.Header);
+        var hoverBg = ImGui.GetColorU32(ImGuiCol.HeaderHovered, 0.5f);
+        var textStrong = ImGui.GetColorU32(ImGuiCol.Text);
+        var textNormal = ImGui.GetColorU32(ImGuiCol.Text, 0.8f);
+        var track = ImGui.GetColorU32(new Vector4(0.5f, 0.5f, 0.5f, 0.35f));
+        var fill = ImGui.GetColorU32(ImGuiCol.PlotHistogram);
+        try
+        {
+            if (!ImGui.BeginChild("##options", new Vector2(-1, height), true))
+                return;
+            for (var i = 0; i < planOptions.Count; i++)
+            {
+                var option = planOptions[i];
+                ImGui.PushID(i);
+                try
+                {
+                    var width = ImGui.GetContentRegionAvail().X;
+                    var pos = ImGui.GetCursorScreenPos();
+                    if (ImGui.InvisibleButton("##row", new Vector2(width, rowH)))
+                        SetBudgetFromOption(option);
+                    var selected = ReferenceEquals(option, applied);
+                    var hovered = ImGui.IsItemHovered();
+                    var dl = ImGui.GetWindowDrawList();
+                    var max = pos + new Vector2(width, rowH);
+                    if (selected)
+                    {
+                        dl.AddRectFilled(pos, max, selectedBg, 3f);
+                        dl.AddRect(pos, max, accent, 3f, ImDrawFlags.None, 1f);
+                    }
+                    else if (hovered)
+                    {
+                        dl.AddRectFilled(pos, max, hoverBg, 3f);
+                    }
+
+                    var textY = pos.Y + (rowH - ImGui.GetTextLineHeight()) * 0.5f;
+                    var textColor = selected ? textStrong : textNormal;
+                    dl.AddText(new Vector2(pos.X + Pad, textY), textColor, $"{option.WorldCount:N0} worlds");
+                    var rightText = i == 0 ? "cheapest" : $"+{option.ExtraGil:N0} gil";
+                    dl.AddText(new Vector2(pos.X + width - Pad - ImGui.CalcTextSize(rightText).X, textY), textColor, rightText);
+
+                    var barX = pos.X + Pad + leftW + Pad;
+                    var barW = Math.Max(20f, width - Pad * 4 - leftW - rightW);
+                    var barY = pos.Y + rowH * 0.5f - 3f;
+                    dl.AddRectFilled(new Vector2(barX, barY), new Vector2(barX + barW, barY + 6f), track, 3f);
+                    if (option.ExtraGil > 0 && maxExtra > 0)
+                    {
+                        var fillW = Math.Max(2f, barW * (float)option.ExtraGil / maxExtra);
+                        dl.AddRectFilled(new Vector2(barX, barY), new Vector2(barX + fillW, barY + 6f), fill, 3f);
+                    }
+                }
+                finally
+                {
+                    ImGui.PopID();
+                }
+            }
+        }
+        finally
+        {
+            ImGui.EndChild();
         }
     }
 
@@ -355,6 +541,7 @@ public sealed class ResultsWindow : Window
                         state.SetQuantity(item.ItemId, w.WorldId, qty);
                         pinnedRows.Add((item.ItemId, w.WorldId));
                         refreshNotice = false;
+                        applied = null;
                         dirty = true;
                     }
                 }

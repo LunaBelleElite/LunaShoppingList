@@ -17,6 +17,9 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
     [PluginService] internal static IPlayerState PlayerState { get; private set; } = null!;
     [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
+    [PluginService] internal static IFramework Framework { get; private set; } = null!;
+    [PluginService] internal static IGameInventory GameInventory { get; private set; } = null!;
+    [PluginService] internal static IGameGui GameGui { get; private set; } = null!;
 
     private const string CommandName = "/lsl";
 
@@ -31,6 +34,7 @@ public sealed class Plugin : IDalamudPlugin
     internal ArtisanListSource ArtisanLists { get; }
     internal HttpClientGetter HttpGetter { get; }
     internal ShoppingListService ShoppingService { get; }
+    internal OwnedItemsService OwnedItems { get; }
     private readonly DiagnosticDump diagnosticDump;
 
     public Plugin()
@@ -45,10 +49,11 @@ public sealed class Plugin : IDalamudPlugin
         HttpGetter = new HttpClientGetter();
         var universalis = new UniversalisClient(HttpGetter, TimeSpan.FromMinutes(10), () => DateTimeOffset.UtcNow);
         ShoppingService = new ShoppingListService(WorldData, universalis);
+        OwnedItems = new OwnedItemsService(PluginInterface, Framework, GameInventory, GameGui, PlayerState, Log);
         diagnosticDump = new DiagnosticDump(DataManager, PlayerState, Log, ChatGui, ArtisanLists, ItemInfo);
 
         Windows = new WindowManager(WindowSystem, Configuration, ArtisanLists, ItemInfo, WorldData, ShoppingService,
-            new MaterialsCalculator(RecipeData), Log);
+            new MaterialsCalculator(RecipeData), OwnedItems, Log);
         Browser = new ListBrowserWindow(Configuration, ArtisanLists, ItemInfo, Windows, Log);
         WindowSystem.AddWindow(Browser);
 
@@ -70,6 +75,8 @@ public sealed class Plugin : IDalamudPlugin
         // Cancels every running build and waits briefly for it, so they are done with the HTTP client first.
         Windows.Dispose();
         WindowSystem.RemoveAllWindows();
+        // Stops counting and writes any retainer or saddlebag record not yet saved.
+        OwnedItems.Dispose();
         CommandManager.RemoveHandler(CommandName);
         HttpGetter.Dispose();
     }

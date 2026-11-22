@@ -14,9 +14,11 @@ public sealed class ListWindow : Window, IDisposable
     private const string NotStoredText = "This list is not stored in Artisan's config (premade/relic lists cannot be read). Use Paste ingredients instead.";
     private const string FootnoteText = "Prices are from Universalis, exclude market tax, and may be out of date. This plugin does not travel for you.";
     private const string OpenedText = "Shopping list opened in its own window.";
+    private const string NoRetainerDataText = "Open each retainer once to count what they hold.";
 
     private static readonly Vector4 WarningColor = new(1f, 0.6f, 0.3f, 1f);
     private static readonly Vector4 ErrorColor = new(1f, 0.4f, 0.4f, 1f);
+    private static readonly Vector4 EnoughColor = new(0.45f, 0.85f, 0.45f, 1f);
 
     private readonly string key;
     private readonly string title;
@@ -28,6 +30,7 @@ public sealed class ListWindow : Window, IDisposable
     private readonly IItemInfo items;
     private readonly IWorldData worlds;
     private readonly ShoppingListService service;
+    private readonly OwnedItemsService owned;
     private readonly IWindowHost host;
     private readonly IPluginLog log;
 
@@ -41,6 +44,7 @@ public sealed class ListWindow : Window, IDisposable
     private readonly object buildGate = new();
     private int generation;
     private OfferBook? pendingBook;
+    private IReadOnlyList<PlanOption>? pendingOptions;
     private volatile bool building;
     private volatile string progressText = string.Empty;
     private volatile string errorText = string.Empty;
@@ -67,6 +71,7 @@ public sealed class ListWindow : Window, IDisposable
         IItemInfo items,
         IWorldData worlds,
         ShoppingListService service,
+        OwnedItemsService owned,
         IWindowHost host,
         IPluginLog log)
         : base(title + "###lsl-list-" + key)
@@ -84,6 +89,7 @@ public sealed class ListWindow : Window, IDisposable
         this.items = items;
         this.worlds = worlds;
         this.service = service;
+        this.owned = owned;
         this.host = host;
         this.log = log;
         Size = new Vector2(520, 560);
@@ -121,6 +127,7 @@ public sealed class ListWindow : Window, IDisposable
         {
             generation++;
             pendingBook = null;
+            pendingOptions = null;
         }
         SweepRetired();
     }
@@ -206,6 +213,7 @@ public sealed class ListWindow : Window, IDisposable
         {
             generation++;
             pendingBook = null;
+            pendingOptions = null;
             building = false;
             progressText = string.Empty;
             errorText = string.Empty;
@@ -277,17 +285,24 @@ public sealed class ListWindow : Window, IDisposable
         // The table follows the window: it takes what is left after keeping room for the Build row,
         // its status and error lines, the login warning and the footnote.
         var rowHeight = ImGui.GetTextLineHeightWithSpacing();
-        var reserved = ImGui.GetFrameHeightWithSpacing() + rowHeight * 5 + ImGui.GetStyle().ItemSpacing.Y * 4;
+        var showRetainerNote = !owned.HasAnyRetainerData && !owned.ExternalAvailable;
+        var reserved = ImGui.GetFrameHeightWithSpacing() + rowHeight * (showRetainerNote ? 6 : 5) + ImGui.GetStyle().ItemSpacing.Y * 4;
         var free = ImGui.GetContentRegionAvail().Y - reserved;
         var tableHeight = Math.Max(rowHeight * 7, free);
-        if (ImGui.BeginTable("##ingredients", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.SizingStretchProp, new Vector2(-1, tableHeight)))
+        if (ImGui.BeginTable("##ingredients", 5, ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersInnerV, new Vector2(-1, tableHeight)))
         {
             try
             {
                 ImGui.TableSetupScrollFreeze(0, 1);
-                ImGui.TableSetupColumn("Buy", ImGuiTableColumnFlags.WidthFixed, 40);
-                ImGui.TableSetupColumn("Item");
-                ImGui.TableSetupColumn("Quantity", ImGuiTableColumnFlags.WidthFixed, 70);
+                // Item takes the leftover width; the fixed columns can be dragged wider or narrower by their borders.
+                // Their starting widths come from the current font, so they follow the font and UI scale.
+                var padding = ImGui.GetStyle().CellPadding.X * 2;
+                ImGui.TableSetupColumn("Buy", ImGuiTableColumnFlags.WidthFixed | ImGuiTableColumnFlags.NoResize,
+                    Math.Max(ImGui.CalcTextSize("Buy").X, ImGui.GetFrameHeight()) + padding);
+                ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch, 1f);
+                ImGui.TableSetupColumn("Quantity", ImGuiTableColumnFlags.WidthFixed, CountColumnWidth("Quantity", padding));
+                ImGui.TableSetupColumn("On you", ImGuiTableColumnFlags.WidthFixed, CountColumnWidth("On you", padding));
+                ImGui.TableSetupColumn("Retainers", ImGuiTableColumnFlags.WidthFixed, CountColumnWidth("Retainers", padding));
                 ImGui.TableHeadersRow();
                 foreach (var r in rows)
                 {
@@ -303,6 +318,13 @@ public sealed class ListWindow : Window, IDisposable
                     ImGui.TextUnformatted(Name(r.ItemId));
                     ImGui.TableNextColumn();
                     ImGui.TextUnformatted(r.Quantity.ToString("N0"));
+
+                    // Counts come from a snapshot published by the framework thread; nothing native is read here.
+                    var summary = owned.Summarize(r.ItemId);
+                    ImGui.TableNextColumn();
+                    DrawOnYou(summary, r.Quantity);
+                    ImGui.TableNextColumn();
+                    DrawRetainers(summary, r.Quantity);
                 }
             }
             finally
@@ -310,7 +332,94 @@ public sealed class ListWindow : Window, IDisposable
                 ImGui.EndTable();
             }
         }
+        if (showRetainerNote)
+            ImGui.TextDisabled(NoRetainerDataText);
     }
+
+    /// <summary>A count column wide enough for its header and for a six-digit count, at the current font size.</summary>
+    private static float CountColumnWidth(string header, float padding)
+        => Math.Max(ImGui.CalcTextSize(header).X, ImGui.CalcTextSize("999,999").X) + padding;
+
+    /// <summary>Bags, crystals and saddlebag; <c>null</c> until the bags have been read for this character.</summary>
+    private static long? OnYouTotal(OwnedSummary s) => s.OnYou is int now ? (long)now + (s.Saddlebag ?? 0) : null;
+
+    private static void DrawOnYou(OwnedSummary s, int needed)
+    {
+        if (OnYouTotal(s) is not long total)
+            ImGui.TextDisabled("-");
+        else if (total >= needed && needed > 0)
+            ImGui.TextColored(EnoughColor, total.ToString("N0"));
+        else
+            ImGui.TextUnformatted(total.ToString("N0"));
+        if (!ImGui.IsItemHovered()) return;
+
+        ImGui.BeginTooltip();
+        try
+        {
+            if (s.OnYou is int now)
+                ImGui.TextUnformatted($"Bags and crystals now: {now:N0}");
+            else
+                ImGui.TextDisabled("Bags and crystals: not read yet");
+            if (s.Saddlebag is int bag)
+                ImGui.TextUnformatted($"Saddlebag: {bag:N0} (as of {LocalTime(s.SaddlebagCapturedUtc)})");
+            else
+                ImGui.TextDisabled("Saddlebag: not seen yet; open it once to count it.");
+            ImGui.TextUnformatted($"Needed: {needed:N0}");
+        }
+        finally
+        {
+            ImGui.EndTooltip();
+        }
+    }
+
+    private static void DrawRetainers(OwnedSummary s, int needed)
+    {
+        if (s.Retainers is long retainers)
+        {
+            var text = retainers.ToString("N0");
+            // Until the bags are read only the retainers themselves count towards "enough".
+            if (needed > 0 && (OnYouTotal(s) ?? 0) + retainers >= needed)
+                ImGui.TextColored(EnoughColor, text);
+            else if (s.RetainerSource == RetainerSource.Cache)
+                // This plugin's own record is only as current as the last visit to each retainer.
+                ImGui.TextDisabled(text);
+            else
+                ImGui.TextUnformatted(text);
+        }
+        else
+        {
+            ImGui.TextDisabled("-");
+        }
+        if (!ImGui.IsItemHovered()) return;
+
+        ImGui.BeginTooltip();
+        try
+        {
+            ImGui.TextUnformatted(s.RetainerSource switch
+            {
+                RetainerSource.External => "Shown: AllaganTools",
+                RetainerSource.Cache => "Shown: this plugin's record of your last retainer visits",
+                _ => "Unknown: no retainer has been opened yet",
+            });
+            if (s.RetainersCached is long cached)
+                ImGui.TextUnformatted($"This plugin's record: {cached:N0}, as of {LocalTime(s.RetainersCapturedOldestUtc)} to {LocalTime(s.RetainersCapturedNewestUtc)}");
+            else
+                ImGui.TextDisabled("This plugin's record: none yet; open each retainer once.");
+            if (s.RetainersExternal is long ext)
+                ImGui.TextUnformatted($"AllaganTools: {ext:N0}");
+            else
+                ImGui.TextDisabled("AllaganTools: not available");
+            ImGui.TextDisabled("Counts retainer inventory, crystals and market listings.");
+            if (s.Retainers is long r && OnYouTotal(s) is long onYou)
+                ImGui.TextUnformatted($"With what is on you: {onYou + r:N0} of {needed:N0} needed");
+        }
+        finally
+        {
+            ImGui.EndTooltip();
+        }
+    }
+
+    private static string LocalTime(DateTimeOffset? utc) => utc is { } t ? t.ToLocalTime().ToString("g") : "unknown";
 
     private void PersistExclusions()
     {
@@ -377,6 +486,7 @@ public sealed class ListWindow : Window, IDisposable
         {
             gen = ++generation;
             pendingBook = null;
+            pendingOptions = null;
             building = true;
             errorText = string.Empty;
             progressText = "Starting...";
@@ -393,9 +503,25 @@ public sealed class ListWindow : Window, IDisposable
             try
             {
                 var result = await service.BuildOfferBookAsync(requirements, scope, exclusions, progress, token).ConfigureAwait(false);
+                // The trade-off options are computed here, on the build task, so the draw thread never runs the search.
+                token.ThrowIfCancellationRequested();
+                IReadOnlyList<PlanOption> options;
+                try
+                {
+                    options = PlanFrontier.Build(result);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // The offer book is fine without the options: the results window falls back to the cheapest plan.
+                    log.Warning(ex, "Computing the plan options failed");
+                    options = Array.Empty<PlanOption>();
+                }
+                // A cancel pressed while the options were computed must not be overridden by a published result.
+                token.ThrowIfCancellationRequested();
                 progress.Finish(() =>
                 {
                     pendingBook = result;
+                    pendingOptions = options;
                     progressText = "Done.";
                 });
             }
@@ -454,16 +580,19 @@ public sealed class ListWindow : Window, IDisposable
     private void PublishPendingResults()
     {
         OfferBook? book;
+        IReadOnlyList<PlanOption>? options;
         lock (buildGate)
         {
             book = pendingBook;
+            options = pendingOptions;
             pendingBook = null;
+            pendingOptions = null;
         }
         if (book == null) return;
 
         try
         {
-            host.ShowResults(key, title, book);
+            host.ShowResults(key, title, book, options ?? Array.Empty<PlanOption>());
             progressText = OpenedText;
         }
         catch (Exception ex)

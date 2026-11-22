@@ -1,11 +1,20 @@
 # Changelog
 
+## 0.5.0.0 - 2026-11-22
+
+Still an early preview. I haven't tried the Plan options panel or the owned-item counts in the game yet. They're built and unit-tested and nothing more, so they may well misbehave.
+
+- The two plan buttons are gone. In their place is a Plan options panel with a "Willing to pay extra" slider, set as a percent over the cheapest total or in gil. It shows the plan that visits the fewest worlds within that budget, and a clickable list gives every option with its extra cost. Slide it to zero for the cheapest. Plans come from a fast search, so they're good but not proven the cheapest.
+- Type a quantity yourself and it overrides the plan; the header says it was edited by hand. Build keeps your budget.
+- You can resize the ingredient table's columns now, and the Quantity column doesn't clip any more.
+- New "On you" and "Retainers" columns show what you already have: bags, crystals and saddlebag, plus retainer contents, which the plugin remembers per character once you've opened each retainer. With AllaganTools installed, its retainer counts are compared with the plugin's and the larger figure is shown. The columns are there to read; Build still prices the full quantity.
+
 ## 0.3.0.0 - 2026-11-21
 
-First public release, and an early preview: tested so far on the global client with Artisan on one machine.
+First public release, and an early preview: tested so far on the global client with Artisan, on one machine.
 
-- `/lsl` opens a list browser with My Lists and Paste tabs and a filter box. Each list opens in its own window with its ingredients, so you can work on several at once.
-- Build fetches prices from Universalis and opens a separate results window per list. Each item shows the total you need and a choice of worlds to buy it on.
-- Two suggested plans to start from, the cheapest and the one that visits fewer worlds, with live totals as you change quantities.
-- Shop across the worlds of your region; a wider choice across every data center is included but untested.
-- Install from this repository's Dalamud custom repository address (see the README). This install route is new in this release.
+- `/lsl` opens a list browser with My Lists and Paste tabs and a filter box. Each list gets its own window with its ingredients, so you can have several going at once.
+- Build fetches prices from Universalis and opens a separate results window for each list, showing each item's total and a choice of worlds to buy it on.
+- Two suggested plans to start from: the cheapest, and one that visits fewer worlds. Totals update as you change quantities.
+- You can shop across the worlds of your region. A wider choice across every data center is in there too, but it's untested.
+- Install it by adding this repository's custom repository address in Dalamud; the README has the steps. That install route is new in this release.

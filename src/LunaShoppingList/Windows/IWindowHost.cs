@@ -9,7 +9,7 @@ internal interface IWindowHost
     /// Opens the results window for the list <paramref name="key"/> with <paramref name="book"/>, or updates and focuses it if it is already open.
     /// Called on the UI thread.
     /// </summary>
-    void ShowResults(string key, string title, OfferBook book);
+    void ShowResults(string key, string title, OfferBook book, IReadOnlyList<PlanOption> options);
 
     /// <summary>The list window for <paramref name="key"/> was closed: dispose it and cancel its build. Its results window stays open.</summary>
     void CloseList(string key);
