@@ -3,7 +3,7 @@
     "Author": "LunaBelleElite",
     "Name": "Luna Shopping List",
     "InternalName": "LunaShoppingList",
-    "AssemblyVersion": "0.7.0.0",
+    "AssemblyVersion": "0.8.0.0",
     "Description": "Builds a price-optimised shopping list, grouped by world, from an Artisan crafting list using current Universalis prices.",
     "Punchline": "Builds a price-optimised shopping list from an Artisan crafting list.",
     "Tags": [
@@ -21,10 +21,10 @@
     "IsHide": false,
     "IsTestingExclusive": false,
     "DownloadCount": 0,
-    "LastUpdate": 1795320164,
-    "Changelog": "\nThis covers everything since 0.5.0.0.\n\n- New My shopping lists tab, for lists you put together yourself. Name the list first, then type an item, pick it from the suggestions, set how many and press Add. Only items that sell on the market board are offered. Lists are saved, and you can rename, edit or delete them. Open one and it prices like an Artisan list, and a craftable item on it can be swapped for its ingredients.\n- The first tab is now called Artisan crafting lists. It used to be My Lists.\n- A new Vendor column shows when an NPC also sells an ingredient, for gil or for currencies such as Bicolor Gemstones, tomestones, scrips or Grand Company seals. Hover it for the vendor and where they are. It's there to read: it doesn't check whether a vendor is unlocked or available to you, and a few vendors can't be matched to an NPC, so those aren't shown.\n- Hover a Retainers number to see which retainer holds the item, and whether it's in their inventory, their crystals or their market listings.\n- Click an item's name in the route list to copy it.",
-    "DownloadLinkInstall": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.7.0.0/latest.zip",
-    "DownloadLinkUpdate": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.7.0.0/latest.zip",
-    "DownloadLinkTesting": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.7.0.0/latest.zip"
+    "LastUpdate": 1795325231,
+    "Changelog": "\n- My shopping lists has a new Add with subcrafts button, beside Quantity and Add. It takes the item you picked, works out every crafting level down to the raw materials (crystals included), adds up the amounts and puts only those materials on the list. The item itself and the intermediate crafts aren't added. Where several recipes make an item, it uses the first one it finds. The button is greyed out for items that can't be crafted.\n- Plain Add still puts the item itself on the list, to buy as it is.\n- The per-row Add ingredients button is gone. It swapped a craftable row for one level of ingredients, and Add with subcrafts does that job properly. Each row now has just Remove.\n- Items that vendors also sell are still broken down all the way.",
+    "DownloadLinkInstall": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.8.0.0/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.8.0.0/latest.zip",
+    "DownloadLinkTesting": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.8.0.0/latest.zip"
   }
 ]
