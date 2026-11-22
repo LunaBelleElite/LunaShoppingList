@@ -42,7 +42,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
-        RecipeData = new LuminaRecipeData(DataManager);
+        RecipeData = new LuminaRecipeData(DataManager, Log);
         RecipeData.WarmUp();
         ItemInfo = new LuminaItemInfo(DataManager, Log);
         ItemInfo.WarmUp();
@@ -52,7 +52,8 @@ public sealed class Plugin : IDalamudPlugin
         ArtisanLists = new ArtisanListSource(PluginInterface, Log);
         HttpGetter = new HttpClientGetter();
         var universalis = new UniversalisClient(HttpGetter, TimeSpan.FromMinutes(10), () => DateTimeOffset.UtcNow);
-        ShoppingService = new ShoppingListService(WorldData, universalis);
+        // Items not sold on the market board are never sent to Universalis; until the item index is built every item counts as marketable.
+        ShoppingService = new ShoppingListService(WorldData, universalis, ItemInfo.IsMarketable);
         OwnedItems = new OwnedItemsService(PluginInterface, Framework, GameInventory, GameGui, PlayerState, Log);
         diagnosticDump = new DiagnosticDump(DataManager, PlayerState, Log, ChatGui, ArtisanLists, ItemInfo);
 

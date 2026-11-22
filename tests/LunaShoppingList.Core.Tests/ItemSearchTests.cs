@@ -119,4 +119,130 @@ public class ItemSearchTests
         Assert.Equal(8, r.Count);
         Assert.Equal("Item number 1", r[0].Name);
     }
+
+    // ---- 0.10.0.3-dev: every typed word must match, in any order ----
+
+    private static ItemSearchEntry[] Materia() => new[]
+    {
+        E(1, "Savage Aim Materia XII"),
+        E(2, "Savage Aim Materia XI"),
+        E(3, "Savage Might Materia XII"),
+        E(4, "Heavens' Eye Materia XII"),
+        E(5, "Heavens' Eye Materia XI"),
+        E(6, "Cotton Yarn"),
+    };
+
+    [Fact]
+    public void MultiWord_NonContiguousWords_AreFound()
+    {
+        Assert.Equal(new uint[] { 1, 4, 3 }, Ids(ItemSearch.Rank("xii materia", Materia(), 10)));
+        Assert.Equal(new uint[] { 1, 3 }, Ids(ItemSearch.Rank("savage xii", Materia(), 10)));
+    }
+
+    [Fact]
+    public void MultiWord_WordOrderIsIrrelevant()
+    {
+        var a = Ids(ItemSearch.Rank("materia savage", Materia(), 10));
+        var b = Ids(ItemSearch.Rank("savage materia", Materia(), 10));
+        Assert.Equal(new uint[] { 2, 1, 3 }, a);
+        Assert.Equal(new uint[] { 2, 1, 3 }, b);
+    }
+
+    [Fact]
+    public void MultiWord_AllWordsRequired_AMissingWordDoesNotMatch()
+    {
+        // "XII" is not in "Savage Aim Materia XI", and "zzz" is in nothing.
+        Assert.Equal(new uint[] { 1, 3 }, Ids(ItemSearch.Rank("savage xii materia", Materia(), 10)));
+        Assert.Empty(ItemSearch.Rank("xii zzz", Materia(), 10));
+        Assert.Empty(ItemSearch.Rank("cotton savage", Materia(), 10));
+    }
+
+    [Fact]
+    public void MultiWord_RepeatedWords_NeedNotOccurTwice()
+    {
+        Assert.Equal(new uint[] { 1, 4, 3 }, Ids(ItemSearch.Rank("xii xii materia materia", Materia(), 10)));
+    }
+
+    [Fact]
+    public void MultiWord_ExtraSpaces_AreIgnored()
+    {
+        Assert.Equal(new uint[] { 1, 4, 3 }, Ids(ItemSearch.Rank("   xii \t  materia   ", Materia(), 10)));
+    }
+
+    [Fact]
+    public void MultiWord_PhraseMatchOutranksScatteredMatch()
+    {
+        var entries = new[]
+        {
+            E(1, "Aim Savage"),                // scattered, all boundaries, shortest
+            E(2, "Savage Materia Aim"),        // scattered, first word is the prefix
+            E(3, "Savage Aim Materia XII"),    // whole phrase is a prefix, longest
+            E(4, "Big Savage Aim Pie"),        // whole phrase at a word start
+        };
+        Assert.Equal(new uint[] { 3, 4, 2, 1 }, Ids(ItemSearch.Rank("savage aim", entries, 10)));
+    }
+
+    [Fact]
+    public void MultiWord_ScatteredTiers_FirstWordPrefix_ThenAllWordStarts_ThenRest()
+    {
+        var entries = new[]
+        {
+            E(1, "Xmateria Q XII"),               // 'materia' mid-word: last tier, yet shorter than #2
+            E(2, "XII Big Materia"),              // every word starts a word, first word not a prefix; longer than #1
+            E(3, "Materia of the Great XII"),     // first word is a prefix, longest
+        };
+        Assert.Equal(new uint[] { 3, 2, 1 }, Ids(ItemSearch.Rank("materia xii", entries, 10)));
+    }
+
+    [Fact]
+    public void MultiWord_WithinATier_ShorterThenAlphabeticalThenId()
+    {
+        var entries = new[]
+        {
+            E(9, "Qq Xii Materia"),
+            E(8, "Pp Xii Materia"),
+            E(7, "Pp Xii Materia"),
+            E(6, "Pp Xii Materia Long"),
+            E(5, "Zz Xii Materia"),
+        };
+        Assert.Equal(new uint[] { 7, 8, 9, 5, 6 }, Ids(ItemSearch.Rank("materia xii", entries, 10)));
+    }
+
+    [Fact]
+    public void MultiWord_Max_CapsAndKeepsTheBestTiers()
+    {
+        var entries = new[]
+        {
+            E(1, "A Xii Materia Long Name"),   // all word starts
+            E(2, "Qxii Materia"),              // rest
+            E(3, "Materia Big Xii"),           // first word prefix
+            E(4, "Materia Xii"),               // exact phrase
+            E(5, "Materia Xii Pie"),           // phrase prefix
+        };
+        Assert.Equal(new uint[] { 4, 5, 3 }, Ids(ItemSearch.Rank("materia xii", entries, 3)));
+    }
+
+    [Fact]
+    public void MultiWord_ApostropheNotTyped_StillMatches()
+    {
+        Assert.Equal(new uint[] { 4 }, Ids(ItemSearch.Rank("heavens eye xii", Materia(), 10)));
+        Assert.Equal(new uint[] { 4 }, Ids(ItemSearch.Rank("xii heavens", Materia(), 10)));
+    }
+
+    [Fact]
+    public void MultiWord_ApostropheTyped_AndCurlyApostropheInName_Match()
+    {
+        var entries = new[] { E(1, "Heavens’ Eye Materia XII"), E(2, "Heavens Eye Materia XI") };
+        Assert.Equal(new uint[] { 1 }, Ids(ItemSearch.Rank("heaven's eye xii", entries, 10)));
+        Assert.Equal(new uint[] { 1 }, Ids(ItemSearch.Rank("heavens eye xii", entries, 10)));
+    }
+
+    [Fact]
+    public void Apostrophe_NotTyped_MatchesAcrossTheApostrophe_OnlyForNamesThatHaveOne()
+    {
+        // 'archangels' is not a substring of "Archangel's Wing", so only the apostrophe fallback finds it.
+        var entries = new[] { E(1, "Archangel's Wing"), E(2, "Archangel Wing"), E(3, "Archangel’s Edge") };
+        Assert.Equal(new uint[] { 1, 3 }, Ids(ItemSearch.Rank("archangels", entries, 10)));
+        Assert.Equal(new uint[] { 1 }, Ids(ItemSearch.Rank("wing archangels", entries, 10)));
+    }
 }

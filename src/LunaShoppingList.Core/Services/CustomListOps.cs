@@ -80,7 +80,8 @@ public static class CustomListOps
     public static IReadOnlyList<Requirement> ToRequirements(CustomList list)
     {
         var result = new List<Requirement>(list.Items.Count);
-        foreach (var i in list.Items) result.Add(new Requirement(i.ItemId, i.Quantity));
+        foreach (var i in list.Items)
+            if (i != null) result.Add(new Requirement(i.ItemId, i.Quantity));
         return result;
     }
 
@@ -95,6 +96,36 @@ public static class CustomListOps
         if (goal == null) list.Goals.Add(new CustomListItem { ItemId = itemId, Quantity = ClampQuantity(quantity) });
         else goal.Quantity = ClampQuantity((long)goal.Quantity + ClampQuantity(quantity));
         return true;
+    }
+
+    /// <summary>
+    /// Whether <see cref="AddGoal"/> would leave the list expandable, without changing it. Null means adding is fine;
+    /// otherwise a message the player can read: the item's own problem ("Item is not valid", "This item cannot be
+    /// crafted", "This recipe has no ingredients"), or "This list is too large to expand" when the existing goals
+    /// together with the new (or merged) goal pass <see cref="RecipeExpander.MaxCraftableItems"/>. Goals that already
+    /// cannot be expanded on their own are ignored here; only the added goal is judged. Nothing throws.
+    /// </summary>
+    public static string? CheckAddGoal(CustomList list, uint itemId, int quantity, IRecipeLookup recipes)
+    {
+        var problem = RecipeExpander.RootProblem(recipes, itemId, out _);
+        if (problem != null) return problem;
+
+        var roots = new List<Requirement>();
+        var merged = false;
+        foreach (var goal in list.Goals)
+        {
+            if (goal == null || RecipeExpander.RootProblem(recipes, goal.ItemId, out _) != null) continue;
+            if (goal.ItemId == itemId)
+            {
+                roots.Add(new Requirement(itemId, ClampQuantity((long)ClampQuantity(goal.Quantity) + ClampQuantity(quantity))));
+                merged = true;
+            }
+            else roots.Add(new Requirement(goal.ItemId, ClampQuantity(goal.Quantity)));
+        }
+        if (!merged) roots.Add(new Requirement(itemId, ClampQuantity(quantity)));
+
+        var expanded = RecipeExpander.ExpandToMaterials(recipes, roots);
+        return expanded.Ok ? null : expanded.Error ?? "This list is too large to expand";
     }
 
     /// <summary>Sets the quantity of an existing goal (clamped to 1..<see cref="MaxQuantity"/>). False when the item is not a goal.</summary>
@@ -129,6 +160,7 @@ public static class CustomListOps
         var plainIndex = new Dictionary<uint, int>();
         foreach (var i in list.Items)
         {
+            if (i == null) continue;
             plainIndex.TryAdd(i.ItemId, plain.Count);
             plain.Add((i.ItemId, i.Quantity));
         }
@@ -203,19 +235,23 @@ public static class CustomListOps
     {
         if (list.Goals.Count > 0) return 0;
         var present = new HashSet<uint>();
-        foreach (var i in list.Items) present.Add(i.ItemId);
+        foreach (var i in list.Items) if (i != null) present.Add(i.ItemId);
         return list.ExcludedItemIds.RemoveWhere(id => !present.Contains(id));
     }
 
     /// <summary>
     /// Removes excluded item ids that are not a row of <see cref="EffectiveRequirements"/> (plain rows and the goals'
     /// materials as they are now). Returns how many were removed. With no goals this is the same as
-    /// <see cref="PruneExclusions(CustomList)"/>.
+    /// <see cref="PruneExclusions(CustomList)"/>. Rule that cannot lose a choice: when any goal could not be expanded
+    /// (too large for <see cref="RecipeExpander.MaxCraftableItems"/>, no recipe, or no usable ingredient), its materials
+    /// are unknown, so nothing at all is pruned and 0 is returned; the stale ids are removed once every goal expands.
     /// </summary>
     public static int PruneExclusions(CustomList list, IRecipeLookup recipes)
     {
+        var effective = EffectiveRequirements(list, recipes);
+        if (effective.Problems.Count > 0) return 0;
         var present = new HashSet<uint>();
-        foreach (var r in EffectiveRequirements(list, recipes).Requirements) present.Add(r.ItemId);
+        foreach (var r in effective.Requirements) present.Add(r.ItemId);
         return list.ExcludedItemIds.RemoveWhere(id => !present.Contains(id));
     }
 
@@ -274,11 +310,16 @@ public static class CustomListOps
     }
 
     /// <summary>
-    /// Replaces each row whose item can be crafted with its raw materials (<see cref="RecipeExpander.ExpandToMaterials(IRecipeLookup, uint, int)"/>),
-    /// then merges everything by item id with saturating sums clamped to <see cref="MaxQuantity"/>. A row that cannot be
-    /// crafted, or whose expansion fails (too large, no ingredients), is kept as given. Order: the rows' first-seen order,
-    /// with a row's materials placed where that row was; a later row for an item already seen adds to the earlier entry.
-    /// Rows with item id 0 or a quantity below 1 are dropped.
+    /// Replaces the rows whose item can be crafted with their raw materials, all expanded TOGETHER
+    /// (<see cref="RecipeExpander.ExpandToMaterials(IRecipeLookup, IReadOnlyList{Requirement})"/>), so an intermediate
+    /// shared by several rows, or a repeated row, is crafted once with the combined demand rounded up once, as in
+    /// <see cref="EffectiveRequirements"/>. A row that cannot be crafted (no recipe, or a recipe with no usable
+    /// ingredient) passes through as given; so do all the craftable rows if their combined expansion fails (too large).
+    /// Order: the pass-through rows first, in first-seen order (a repeated item adds to its first entry), then the
+    /// derived materials by item id ascending, a material that is also a pass-through row being added to that row. Sums
+    /// saturate at <see cref="MaxQuantity"/>. Rows with item id 0 or a quantity below 1 are dropped. When the
+    /// pass-through ids are distinct this equals <see cref="EffectiveRequirements"/> of a list holding them as plain rows
+    /// and the craftable rows as goals.
     /// </summary>
     public static IReadOnlyList<Requirement> Breakdown(IRecipeLookup recipes, IReadOnlyList<Requirement> rows)
     {
@@ -292,20 +333,27 @@ public static class CustomListOps
             else { order.Add(id); totals[id] = ClampQuantity(quantity); }
         }
 
+        var craftable = new List<Requirement>();
+        var passThrough = new List<Requirement>();
         foreach (var row in rows)
         {
             if (row.ItemId == 0 || row.Quantity < 1) continue;
-            if (recipes.FindRecipeForItem(row.ItemId) != null)
-            {
-                var expanded = RecipeExpander.ExpandToMaterials(recipes, row.ItemId, row.Quantity);
-                if (expanded.Ok)
-                {
-                    foreach (var m in expanded.Items!) Add(m.ItemId, m.Quantity);
-                    continue;
-                }
-            }
-            Add(row.ItemId, row.Quantity);
+            if (RecipeExpander.RootProblem(recipes, row.ItemId, out _) == null) craftable.Add(row);
+            else passThrough.Add(row);
         }
+
+        MaterialsResult? expanded = craftable.Count > 0 ? RecipeExpander.ExpandToMaterials(recipes, craftable) : null;
+        if (expanded != null && !expanded.Ok)
+        {
+            passThrough.Clear();
+            foreach (var row in rows)
+                if (row.ItemId != 0 && row.Quantity >= 1) passThrough.Add(row);
+            expanded = null;
+        }
+
+        foreach (var row in passThrough) Add(row.ItemId, row.Quantity);
+        if (expanded != null)
+            foreach (var m in expanded.Items!) Add(m.ItemId, m.Quantity);
 
         var result = new List<Requirement>(order.Count);
         foreach (var id in order) result.Add(new Requirement(id, totals[id]));

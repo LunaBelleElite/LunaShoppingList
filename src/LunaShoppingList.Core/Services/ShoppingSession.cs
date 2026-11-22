@@ -9,6 +9,7 @@ public sealed class ShoppingSession
     private readonly MaterialsCalculator _calc;
     private readonly IItemInfo _items;
     private IReadOnlyList<Requirement> _requirements = Array.Empty<Requirement>();
+    private readonly HashSet<uint> _explicitIncludes = new();
 
     /// <summary>Creates a session.</summary>
     /// <param name="calc">Computes requirements for an Artisan list.</param>
@@ -61,14 +62,15 @@ public sealed class ShoppingSession
 
     /// <summary>
     /// Unticks every ingredient that has a recipe (<paramref name="recipes"/> finds one), on top of the exclusions already
-    /// set; nothing is ever re-included. Crystals, shards and clusters are never touched.
+    /// set; nothing is ever re-included. Crystals, shards and clusters are never touched, and neither is an item the
+    /// user explicitly ticked on (<see cref="ExportIncludes"/>).
     /// </summary>
     /// <param name="recipes">Finds the recipe that makes an item.</param>
     public void ExcludeCrafted(IRecipeLookup recipes)
     {
         ArgumentNullException.ThrowIfNull(recipes);
         var crafted = _requirements
-            .Where(r => !_items.IsCrystalLike(r.ItemId) && recipes.FindRecipeForItem(r.ItemId) != null)
+            .Where(r => !_explicitIncludes.Contains(r.ItemId) && !_items.IsCrystalLike(r.ItemId) && recipes.FindRecipeForItem(r.ItemId) != null)
             .Select(r => r.ItemId)
             .ToList();
         Exclusions.ExcludeAll(crafted, true);
@@ -76,7 +78,13 @@ public sealed class ShoppingSession
 
     /// <summary>Includes or excludes every current requirement, crystals too; exclusions for items not in the list are kept.</summary>
     /// <param name="included">True to buy everything, false to skip everything.</param>
-    public void SetAllIncluded(bool included) => Exclusions.ExcludeAll(_requirements.Select(r => r.ItemId).ToList(), !included);
+    public void SetAllIncluded(bool included)
+    {
+        var ids = _requirements.Select(r => r.ItemId).ToList();
+        Exclusions.ExcludeAll(ids, !included);
+        if (included) foreach (var id in ids) _explicitIncludes.Add(id);
+        else _explicitIncludes.Clear();
+    }
 
     /// <summary>True only if there is at least one requirement and all of them are included.</summary>
     public bool AreAllIncluded => _requirements.Count > 0 && _requirements.All(r => IsIncluded(r.ItemId));
@@ -88,12 +96,18 @@ public sealed class ShoppingSession
         ArgumentNullException.ThrowIfNull(paste);
         _requirements = paste.Requirements.OrderBy(r => r.ItemId).ToList();
         Exclusions.ExcludedItemIds.Clear();
+        _explicitIncludes.Clear();
     }
 
     /// <summary>Includes or excludes one item; other items are unaffected.</summary>
     /// <param name="itemId">Item row id.</param>
     /// <param name="included">True to buy it, false to skip it.</param>
-    public void SetIncluded(uint itemId, bool included) => Exclusions.SetExcluded(itemId, !included);
+    public void SetIncluded(uint itemId, bool included)
+    {
+        Exclusions.SetExcluded(itemId, !included);
+        if (included) _explicitIncludes.Add(itemId);
+        else _explicitIncludes.Remove(itemId);
+    }
 
     /// <summary>True unless the item is excluded.</summary>
     /// <param name="itemId">Item row id.</param>
@@ -101,7 +115,12 @@ public sealed class ShoppingSession
 
     /// <summary>Excludes or re-includes every crystal-like requirement; other items are unaffected.</summary>
     /// <param name="excluded">True to exclude them all.</param>
-    public void SetCrystalsExcluded(bool excluded) => Exclusions.ExcludeAll(CrystalLikeItemIds, excluded);
+    public void SetCrystalsExcluded(bool excluded)
+    {
+        var crystals = CrystalLikeItemIds;
+        Exclusions.ExcludeAll(crystals, excluded);
+        if (excluded) foreach (var id in crystals) _explicitIncludes.Remove(id);
+    }
 
     /// <summary>True only if there is at least one crystal-like requirement and all of them are excluded.</summary>
     public bool AreAllCrystalsExcluded
@@ -111,6 +130,20 @@ public sealed class ShoppingSession
             var ids = CrystalLikeItemIds;
             return ids.Count > 0 && ids.All(Exclusions.IsExcluded);
         }
+    }
+
+    /// <summary>A copy of the item ids the user explicitly ticked on (see <see cref="SetIncluded"/>), for saving beside the exclusions.</summary>
+    public IReadOnlySet<uint> ExportIncludes() => new HashSet<uint>(_explicitIncludes);
+
+    /// <summary>
+    /// Replaces the explicitly ticked ids with the given ones; duplicates are merged and a null sequence means none.
+    /// </summary>
+    /// <param name="itemIds">Explicitly ticked item ids.</param>
+    public void ImportIncludes(IEnumerable<uint> itemIds)
+    {
+        var copy = itemIds?.ToList() ?? new List<uint>();
+        _explicitIncludes.Clear();
+        foreach (var id in copy) _explicitIncludes.Add(id);
     }
 
     /// <summary>A copy of the excluded item ids, including ids not in the current requirements.</summary>

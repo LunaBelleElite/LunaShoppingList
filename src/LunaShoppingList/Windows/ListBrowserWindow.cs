@@ -18,6 +18,7 @@ public sealed class ListBrowserWindow : Window
     private const string ChooseListFirstText = "Choose a list first.";
     private const string ArtisanAlreadyText = "This list is already in Artisan.";
     private const string NothingToExportText = "Nothing to export: the list is empty.";
+    private const string AllSkippedText = "Every entry in this list is set to Skip or has an unknown recipe, so there is nothing to export.";
     private const int PasteMaxLength = 50000;
     private const int MaxSkippedNames = 8;
     private const string CutOffText = "The text was cut off at the size limit, so the last items may be missing or wrong.";
@@ -29,6 +30,7 @@ public sealed class ListBrowserWindow : Window
     private const string AddWithSubcraftsTooltip = "Keeps the finished item as a goal on this list and works out the materials down to raw materials, so the list can be exported to Artisan with its subcrafts. The item itself is not a shopping row. Where several recipes make an item, the first recipe found is used.";
     private const string GoalsNoteText = "The materials for these goals are added to the shopping list automatically.";
     private const string RecipesLoadingText = "Recipe data is still loading...";
+    private const string RecipesFailedText = "Recipe data could not be loaded. Check /xllog, then try again.";
     private const string TeamcraftLinkHintText = "Share Teamcraft list copies a link to send to someone else. They should open it as a website (paste it into the browser's address bar), not try to import it in Teamcraft's import dialog.";
     private const string ShareTeamcraftTooltip = "Copies the Teamcraft link so you can send it to another person. They open it as a website; it does not work in Teamcraft's own import dialog. To use it yourself, press Open in Teamcraft instead.";
     private const string ExcludeCraftedTooltip = "When on, Artisan lists open with crafted ingredients (anything that has a recipe) unticked, so you only buy the raw materials. Your own ticks still win.";
@@ -574,9 +576,12 @@ public sealed class ListBrowserWindow : Window
         ImGui.TextUnformatted("Goals");
         uint removeId = 0;
         var commitQuantity = false;
-        var tableOpen = ImGui.BeginTable("##customGoals", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Resizable);
+        // The list id scopes every widget id below, so a box on another list with the same item id is never the same widget.
+        ImGui.PushID(list.Id);
+        var tableOpen = false;
         try
         {
+            tableOpen = ImGui.BeginTable("##customGoals", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Resizable);
             if (tableOpen)
             {
                 var style = ImGui.GetStyle();
@@ -628,6 +633,7 @@ public sealed class ListBrowserWindow : Window
         {
             if (tableOpen)
                 ImGui.EndTable();
+            ImGui.PopID();
         }
         PushWrappedDim(GoalsNoteText);
 
@@ -643,7 +649,17 @@ public sealed class ListBrowserWindow : Window
         var result = GetMaterials(list);
         if (result == null)
         {
-            PushWrappedDim(RecipesLoadingText);
+            if (recipes is LuminaRecipeData { IsResultIndexFailed: true })
+            {
+                PushWrappedDim(RecipesFailedText);
+                // The failed build is not retried every frame: a click here, or the next goal edit, starts it again.
+                if (ImGui.SmallButton("Try again##recipesRetry"))
+                    InvalidateMaterials();
+            }
+            else
+            {
+                PushWrappedDim(RecipesLoadingText);
+            }
             return;
         }
         foreach (var problem in result.Problems)
@@ -709,9 +725,12 @@ public sealed class ListBrowserWindow : Window
     {
         uint removeId = 0;
         var commitQuantity = false;
-        var tableOpen = ImGui.BeginTable("##customItems", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Resizable);
+        // The list id scopes every widget id below, so a box on another list with the same item id is never the same widget.
+        ImGui.PushID(list.Id);
+        var tableOpen = false;
         try
         {
+            tableOpen = ImGui.BeginTable("##customItems", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Resizable);
             if (tableOpen)
             {
                 var style = ImGui.GetStyle();
@@ -762,6 +781,7 @@ public sealed class ListBrowserWindow : Window
         {
             if (tableOpen)
                 ImGui.EndTable();
+            ImGui.PopID();
         }
 
         if (commitQuantity)
@@ -943,7 +963,14 @@ public sealed class ListBrowserWindow : Window
     {
         deletePending = false;
         SetMessage(string.Empty);
-        // The recipe expansion runs here, on the click, never per frame. It checks that the item can be expanded before the goal is stored.
+        // The recipe expansion runs here, on the click, never per frame. It checks that the goal can be added (alone and
+        // together with the goals already in the list) before it is stored; a refusal changes nothing.
+        var problem = CustomListOps.CheckAddGoal(list, pickedItemId, addQuantity, recipes);
+        if (problem != null)
+        {
+            SetMessage(problem);
+            return;
+        }
         var result = RecipeExpander.ExpandToMaterials(recipes, pickedItemId, addQuantity);
         if (!result.Ok)
         {
@@ -1419,7 +1446,14 @@ public sealed class ListBrowserWindow : Window
                     SetMessage("That Artisan list was not found.");
                     return null;
                 }
-                return (ArtisanListItems.CraftedItems(list, recipeData), list.Name);
+                var crafted = ArtisanListItems.CraftedItems(list, recipeData);
+                if (crafted.Count == 0 && list.Items.Count > 0)
+                {
+                    // CraftedItems also leaves out entries with fewer than 1 craft; the wording keeps to the two common causes.
+                    SetMessage(AllSkippedText);
+                    return null;
+                }
+                return (crafted, list.Name);
             }
             catch (ArtisanConfigUnreadableException ex)
             {
@@ -1432,6 +1466,35 @@ public sealed class ListBrowserWindow : Window
         return null;
     }
 
+    /// <summary>
+    /// The Teamcraft link for the craftable rows only (<see cref="ExportFilter.CraftableOnly"/>, the rule the Artisan export uses),
+    /// or null with a message shown when there is nothing to send. Recipe lookups run on the click only.
+    /// </summary>
+    private (string Link, CraftableRows Craftable)? BuildCraftableTeamcraftLink(IReadOnlyList<Requirement> rows)
+    {
+        var craftable = ExportFilter.CraftableOnly(rows, recipes);
+        var link = craftable.Rows.Count == 0 ? null : TeamcraftLink.Build(craftable.Rows);
+        if (link == null)
+        {
+            SetMessage(craftable.SkippedItemIds.Count > 0
+                ? "None of these items can be crafted, so there is nothing to give Teamcraft."
+                : NothingToExportText);
+            return null;
+        }
+        return (link, craftable);
+    }
+
+    /// <summary>The orange note under a Teamcraft export: the items left out, and the long-link warning; empty when neither applies.</summary>
+    private string TeamcraftWarning(CraftableRows craftable, string link)
+    {
+        var parts = new List<string>();
+        if (craftable.SkippedItemIds.Count > 0)
+            parts.Add(SkippedText(craftable.SkippedItemIds));
+        if (link.Length > TeamcraftLink.LongLinkWarningLength)
+            parts.Add("This link is very long. Some browsers may refuse it.");
+        return string.Join(" ", parts);
+    }
+
     private void CopyTeamcraftLink()
     {
         try
@@ -1439,17 +1502,13 @@ public sealed class ListBrowserWindow : Window
             SetMessage(string.Empty);
             if (ExportRows() is not { } source)
                 return;
-            var link = TeamcraftLink.Build(source.Rows);
-            if (link == null)
-            {
-                SetMessage(NothingToExportText);
+            if (BuildCraftableTeamcraftLink(source.Rows) is not { } built)
                 return;
-            }
+            var (link, craftable) = built;
             ImGui.SetClipboardText(link);
             ioInImport = false;
-            ioNotice = $"Copied a Teamcraft link for {source.Rows.Count} {(source.Rows.Count == 1 ? "item" : "items")}.";
-            if (link.Length > TeamcraftLink.LongLinkWarningLength)
-                ioWarn = "This link is very long. Some browsers may refuse it.";
+            ioNotice = $"Copied a Teamcraft link for {craftable.Rows.Count} {(craftable.Rows.Count == 1 ? "item" : "items")}.";
+            ioWarn = TeamcraftWarning(craftable, link);
         }
         catch (Exception ex)
         {
@@ -1465,12 +1524,9 @@ public sealed class ListBrowserWindow : Window
             SetMessage(string.Empty);
             if (ExportRows() is not { } source)
                 return;
-            var link = TeamcraftLink.Build(source.Rows);
-            if (link == null)
-            {
-                SetMessage(NothingToExportText);
+            if (BuildCraftableTeamcraftLink(source.Rows) is not { } built)
                 return;
-            }
+            var (link, craftable) = built;
             if (!TeamcraftLink.IsSafeWebLink(link))
             {
                 SetMessage("Could not open the link: it is not a web address.");
@@ -1478,9 +1534,8 @@ public sealed class ListBrowserWindow : Window
             }
             Dalamud.Utility.Util.OpenLink(link);
             ioInImport = false;
-            ioNotice = $"Opened Teamcraft with {source.Rows.Count} {(source.Rows.Count == 1 ? "item" : "items")}.";
-            if (link.Length > TeamcraftLink.LongLinkWarningLength)
-                ioWarn = "This link is very long. Some browsers may refuse it.";
+            ioNotice = $"Opened Teamcraft with {craftable.Rows.Count} {(craftable.Rows.Count == 1 ? "item" : "items")}.";
+            ioWarn = TeamcraftWarning(craftable, link);
         }
         catch (Exception ex)
         {

@@ -3,7 +3,8 @@
 **Turn an Artisan crafting list into a shopping list that tells you which world to buy each thing on.**
 
 Luna Shopping List is a Dalamud plugin for Final Fantasy XIV. Open one of your
-Artisan crafting lists, or a list you made in the plugin, press Build, and it
+Artisan crafting lists, or a list you made in the plugin, press Build shopping
+list, and it
 asks Universalis what everything costs right now. You get each item once, with
 the worlds selling it, and you decide where to buy what. If you'd rather not
 decide, it will suggest a plan, and the route and totals keep up as you change
@@ -35,7 +36,7 @@ people you trust.
 
 Type `/lsl` and the list browser opens, with three tabs: Artisan crafting
 lists, My shopping lists and Import / Export. Pick a list and it gets its own
-window. Build in that window opens a results window. You can have several of
+window. **Build shopping list** in that window opens a results window. You can have several of
 each open at once.
 
 **Artisan crafting lists tab.** Your Artisan lists are shown here.
@@ -59,8 +60,8 @@ each open at once.
 4. Change a quantity in a row or a goal and the materials follow. Remove takes
    a row or goal off. The materials section is worked out for you, so you can't
    edit it.
-5. Rename and Delete sit beside the list's name; Delete asks you to click
-   twice. **Shop for this list** opens it.
+5. **Shop for this list** opens it. Rename and Delete sit on the line below
+   the list's name, after it. Delete asks you to click twice.
 
 **Import / Export tab.** Brings a list in from Teamcraft or Artisan, or sends
 one out.
@@ -68,47 +69,54 @@ one out.
 - Import: paste a Teamcraft import link, an Artisan list (Artisan's **Export
   List**) or plain `3x Item Name` lines, such as Teamcraft's **Copy as Text**,
   and press Parse. It tells you which one it found, and lists any lines it
-  couldn't match.
-- Then **Save as shopping list** (give it a name; tick **Break down into raw
+  couldn't match. **Paste from clipboard** fills the box with whatever you
+  copied.
+- Then **Save as shopping list** (give it a name, and tick **Break down into raw
   materials** if you want the crafts worked out), or **Open without saving**.
 - Export: pick one of your lists. **Open in Teamcraft** opens Teamcraft's
   import page in your browser. **Copy Artisan list** (My shopping lists only)
   copies every sub-craft, ready for Artisan's **Import List From Clipboard
   (Artisan Export)**. **Share Teamcraft list** copies a link to send to someone
-  else; they open it in a browser, not in Teamcraft's import dialog.
+  else. They open it in a browser, not in Teamcraft's import dialog.
 
 **A list window.** This is where you decide what to price.
 
 - **Where to shop** sets the worlds you're willing to buy from. It's one choice
-  shared by every list window.
+  shared by every list window. **Cross-world** covers the worlds you can reach
+  from a main-city aetheryte, which is your region. **Cross data center** covers
+  everywhere, and other regions need Data Center Travel.
 - Untick **Buy** on anything you don't need. **Check/uncheck all** ticks or
-  unticks every row at once. Your choices are remembered for Artisan and My shopping lists.
-- **On you** and **Retainers** show how many you already hold; hover Retainers
+  unticks every row at once. **Toggle all crystals/shards/clusters** does the same
+  for just those. Your choices are remembered for Artisan and My shopping lists.
+- **On you** and **Retainers** show how many you already hold. Hover Retainers
   to see which retainer has it. The **Vendor** column shows when an NPC also
-  sells the item; hover it for the vendor and where they stand. Drag a column
+  sells the item. Hover it for the vendor and where they stand. Drag a column
   border if it's too narrow.
-- Press **Build**. Prices come from Universalis and the results window opens.
+- **Reload list** reads the list again. Use it if you changed the list somewhere
+  else, or if the window says recipe data is still loading.
+- Press **Build shopping list**. Prices come from Universalis and the results
+  window opens.
 
 **The results window.** This is where you pick the route.
 
 - **Willing to pay extra** takes a percent over the cheapest total, or an
   amount of gil. It picks the plan that visits the fewest worlds within that
   budget. Click a different option in the list to use it, or slide to zero for
-  the cheapest.
+  the cheapest. **Reset to cheapest** does the same in one click.
 - Each item lists the worlds selling it. Type a quantity next to a world to
   change what you buy there, and the totals follow. The header then says the
   plan was edited by hand.
 - The route lists each world with what to buy there. Click an item's name and
   it's copied, so you can paste it into the market board search.
-- Press Build again in the list window and the prices refresh. Your quantity
+- Press Build shopping list again in the list window and the prices refresh. Your quantity
   changes are reset, but the budget stays.
 
 ## What it won't do
 
 It won't travel or buy for you. It plans, and you do the shopping.
 
-It doesn't knock what you already own off the bill. Build still prices the full
-quantity, whatever **On you** and **Retainers** say; those columns are there for
+It doesn't knock what you already own off the bill. Building still prices the full
+quantity, whatever **On you** and **Retainers** say. Those columns are there for
 you to read. Untick anything you don't need to buy.
 
 It can only see a retainer or the saddlebag while it's open. So it remembers
@@ -119,7 +127,7 @@ know yet. Equipped and armoury items aren't counted.
 It doesn't know whether you can actually buy from a vendor in the Vendor
 column. Some need a quest, a rank or an unlock first, and it doesn't check any
 of that. A few vendors can't be matched to an NPC, so those don't show up at
-all. Build still prices everything from the market board either way.
+all. Building still prices everything from the market board either way.
 
 It can't promise the cheapest plan. Its plans come from a fast search, and
 they're good, but nobody has proven them optimal.
@@ -138,8 +146,8 @@ game's own Data Center Travel, which the plugin doesn't do for you.
 
 I haven't tried importing a Teamcraft link or an Artisan export back into the
 Import tab, so going the other way (Open in Teamcraft, Copy Artisan list) is
-the better-trodden direction. The same goes for the Exclude crafted items
-checkbox, Check/uncheck all, removing goals, old lists still loading after an
+the better-trodden direction. The same goes for the any-order search, the market
+board note, the Exclude crafted items checkbox, Check/uncheck all, removing goals, old lists still loading after an
 update, the stale-listing marker, the short-by and over-by notes, Reload list,
 closing windows with Esc or a gamepad, and updating the plugin. If any of those
 misbehaves, I'd like to hear about it.
@@ -170,7 +178,7 @@ version 3, which you'll find in the `LICENSE` file. Copyright 2026 LunaBelleElit
 Prices come from [Universalis](https://universalis.app), a community-run market
 board service. Thanks to the people who keep it running.
 
-Teamcraft and Artisan are separate projects; this isn't affiliated with either.
+Teamcraft and Artisan are separate projects, and this isn't affiliated with either.
 It isn't affiliated with or endorsed by Square Enix. Final Fantasy is a
 trademark of Square Enix.
 

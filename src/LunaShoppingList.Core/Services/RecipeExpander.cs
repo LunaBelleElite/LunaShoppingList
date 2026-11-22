@@ -161,7 +161,8 @@ public static class RecipeExpander
             if (skipRootsWithoutIngredients && !recipe.Ingredients.Any(i => i.ItemId != 0 && i.Amount >= 1)) continue;
 
             rootDemand.TryGetValue(root.ItemId, out var have);
-            rootDemand[root.ItemId] = Saturate(have + CustomListOps.ClampQuantity(root.Quantity));
+            // The summed demand of one root is clamped to MaxQuantity, as CustomListOps.ExportRows clamps merged rows.
+            rootDemand[root.ItemId] = CustomListOps.ClampQuantity((long)(have + CustomListOps.ClampQuantity(root.Quantity)));
             if (!nodes.ContainsKey(root.ItemId) && !Walk(recipes, memo, nodes, postorder, root.ItemId, recipe))
                 return false;
             nodes[root.ItemId].IsRoot = true;

@@ -61,6 +61,14 @@ public sealed class LuminaItemInfo : IItemInfo, IItemCatalog
     /// <summary>Market-board items, one per distinct name, sorted by name then id. Empty until <see cref="IsReady"/>; never blocks.</summary>
     public IReadOnlyList<ItemSearchEntry> MarketableItems => index.IsValueCreated ? index.Value.Marketable : NoEntries;
 
+    /// <summary>
+    /// Whether an item can be sold on the market board (a market search category and not untradable), by id, from the same
+    /// background index as <see cref="MarketableItems"/>. Answers <c>true</c> while that index is not built yet (or failed for
+    /// good): an unknown item is treated as marketable, so a build never skips a price lookup on a guess. Never blocks and reads
+    /// no sheet: a set lookup once the index is ready.
+    /// </summary>
+    public bool IsMarketable(uint itemId) => !index.IsValueCreated || index.Value.MarketableIds.Contains(itemId);
+
     /// <summary>Builds the name index on the thread pool unless it is built, being built, has failed for good, or the last attempt started only moments ago.</summary>
     internal void WarmUp()
     {
@@ -125,7 +133,8 @@ public sealed class LuminaItemInfo : IItemInfo, IItemCatalog
         return (row.ItemUICategory.RowId, row.ItemUICategory.ValueNullable?.Name.ToString() ?? "?");
     }
 
-    private sealed record Index(Dictionary<string, uint> ByName, IReadOnlyList<ItemSearchEntry> Marketable);
+    // MarketableIds holds every marketable row id (Marketable is deduplicated by name, so it is no per-id test).
+    private sealed record Index(Dictionary<string, uint> ByName, IReadOnlyList<ItemSearchEntry> Marketable, HashSet<uint> MarketableIds);
 
     private Index BuildIndex()
     {
@@ -136,8 +145,11 @@ public sealed class LuminaItemInfo : IItemInfo, IItemCatalog
 
         var map = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
         var market = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
+        var marketableIds = new HashSet<uint>();
         foreach (var row in items)
         {
+            if (row.ItemSearchCategory.RowId > 0 && !row.IsUntradable)
+                marketableIds.Add(row.RowId);
             // Trimmed, because FindByName trims what it is asked for; a few rows end in a space.
             var name = row.Name.ToString().Trim();
             if (string.IsNullOrEmpty(name))
@@ -156,6 +168,6 @@ public sealed class LuminaItemInfo : IItemInfo, IItemCatalog
             var c = string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
             return c != 0 ? c : a.ItemId.CompareTo(b.ItemId);
         });
-        return new Index(map, list.AsReadOnly());
+        return new Index(map, list.AsReadOnly(), marketableIds);
     }
 }

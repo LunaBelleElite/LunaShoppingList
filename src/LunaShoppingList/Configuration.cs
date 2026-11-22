@@ -13,6 +13,12 @@ public sealed class Configuration : IPluginConfiguration
     public Dictionary<int, HashSet<uint>> ExcludedItemsByList { get; set; } = new();
 
     /// <summary>
+    /// Item ids the player ticked on by hand, per Artisan list id, so Exclude crafted items does not untick them again.
+    /// A settings file without the member loads as empty.
+    /// </summary>
+    public Dictionary<int, HashSet<uint>> IncludedItemsByList { get; set; } = new();
+
+    /// <summary>
     /// When true, an Artisan list opens with every ingredient that has a recipe unticked, on top of its saved choices.
     /// A settings file without the member loads as false.
     /// </summary>
@@ -44,7 +50,11 @@ public sealed class Configuration : IPluginConfiguration
 
     // The settings reader may fill the existing list in place without calling the setter, so repair after loading too.
     [OnDeserialized]
-    internal void OnDeserialized(StreamingContext context) => CustomListOps.Normalize(customLists);
+    internal void OnDeserialized(StreamingContext context)
+    {
+        CustomListOps.Normalize(customLists);
+        IncludedItemsByList ??= new();
+    }
 
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 
@@ -58,10 +68,13 @@ public sealed class Configuration : IPluginConfiguration
         if (current.Count == 0)
             return;
         var stale = ExcludedItemsByList.Keys.Where(id => !current.Contains(id)).ToList();
-        if (stale.Count == 0)
+        var staleIncludes = IncludedItemsByList.Keys.Where(id => !current.Contains(id)).ToList();
+        if (stale.Count == 0 && staleIncludes.Count == 0)
             return;
         foreach (var id in stale)
             ExcludedItemsByList.Remove(id);
+        foreach (var id in staleIncludes)
+            IncludedItemsByList.Remove(id);
         Save();
     }
 }

@@ -13,10 +13,13 @@ public sealed class ListWindow : Window, IDisposable
     private const string UnreadableConfigText = "Couldn't read Artisan's config, try again in a moment.";
     private const string NotStoredText = "This list is not stored in Artisan's config (premade/relic lists cannot be read). Use the Import / Export tab instead.";
     private const string CustomListGoneText = "This shopping list no longer exists.";
-    private const string CraftedPendingText = "Crafted items will be unticked once recipe data has loaded - press Reload list.";
-    private const string GoalsPendingText = "Materials for the goals will appear once recipe data has loaded - press Reload list.";
+    private const string CraftedPendingText = "Crafted items will be unticked by themselves once recipe data has loaded.";
+    private const string GoalsPendingText = "Materials for the goals are not loaded yet. They will appear by themselves once recipe data has loaded.";
+    private const string RecipesFailedText = "Recipe data could not be loaded. Check /xllog, then try again.";
+    private const string GoalsPendingBuildTooltip = "Waiting for recipe data. The goals' materials are not loaded yet.";
     private const string FootnoteText = "Prices are from Universalis, exclude market tax, and may be out of date. This plugin does not travel for you.";
     private const string OpenedText = "Shopping list opened in its own window.";
+    private const string NotOnMarketSuffix = " (not sold on the market board)";
     private const string NoRetainerDataText = "Open each retainer once to count what they hold.";
     private const string ListChangedCancelledText = "The list changed, so the running build was cancelled.";
     private const string ListChangedDiscardedText = "The list changed, so the finished build was discarded.";
@@ -50,6 +53,8 @@ public sealed class ListWindow : Window, IDisposable
     private bool craftedPending;
     // True when a custom list has goals but the recipe index was not built yet, so only its plain rows were loaded.
     private bool goalsPending;
+    // True once a tick was changed in this window since the list was last loaded; the automatic reload then leaves the rows alone.
+    private bool userEdited;
     // Goals whose materials could not be worked out (custom lists only); shown as warning lines.
     private IReadOnlyList<GoalProblem> goalProblems = [];
     private List<Requirement> rows = [];
@@ -180,6 +185,7 @@ public sealed class ListWindow : Window, IDisposable
     /// <inheritdoc />
     public override void Draw()
     {
+        ApplyPendingRecipeData();
         DrawHeader();
         ImGui.Separator();
         DrawScope();
@@ -193,8 +199,21 @@ public sealed class ListWindow : Window, IDisposable
 
     // ---- Loading ----
 
+    /// <summary>
+    /// When the list was loaded before the recipe index existed, loads it again once the index is ready: one bool read per
+    /// frame, and the reload happens once (LoadList clears both pending flags). Skipped while a build runs or after the
+    /// user changed a tick, so nothing they did is thrown away; Reload list still does it on request.
+    /// </summary>
+    private void ApplyPendingRecipeData()
+    {
+        if ((goalsPending || craftedPending) && !userEdited && !building
+            && recipes is LuminaRecipeData { IsResultIndexReady: true })
+            LoadList();
+    }
+
     private void LoadList()
     {
+        userEdited = false;
         sourceMessage = string.Empty;
         craftedPending = false;
         goalsPending = false;
@@ -211,6 +230,8 @@ public sealed class ListWindow : Window, IDisposable
                 else
                 {
                     session.LoadFromList(list, config.ExcludedItemsByList.TryGetValue(id, out var saved) ? saved : []);
+                    // Order matters: the ticks the player set by hand are known before Exclude crafted items runs.
+                    session.ImportIncludes(config.IncludedItemsByList.TryGetValue(id, out var included) ? included : []);
                     if (config.ExcludeCraftedItems)
                         ApplyExcludeCrafted();
                 }
@@ -255,7 +276,7 @@ public sealed class ListWindow : Window, IDisposable
     /// <summary>
     /// The saved list's plain rows plus the materials of its goals. The recipe index is never built here (that would stall
     /// the UI thread): with goals and no index yet this starts the build in the background, loads the plain rows only and
-    /// leaves a note to press Reload list.
+    /// leaves a note; <see cref="ApplyPendingRecipeData"/> loads the list again once the index is ready.
     /// </summary>
     private IReadOnlyList<Requirement> LoadCustomRequirements(CustomList saved)
     {
@@ -274,7 +295,7 @@ public sealed class ListWindow : Window, IDisposable
 
     /// <summary>
     /// Unticks the ingredients that have a recipe. The recipe index is never built here (that would stall the UI thread):
-    /// while it is not ready this only starts building it in the background and leaves a note to press Reload list.
+    /// while it is not ready this only starts building it in the background and leaves a note; <see cref="ApplyPendingRecipeData"/> applies it later.
     /// </summary>
     private void ApplyExcludeCrafted()
     {
@@ -355,10 +376,18 @@ public sealed class ListWindow : Window, IDisposable
         }
         if (sourceMessage.Length > 0)
             WrappedColored(WarningColor, sourceMessage);
-        if (craftedPending)
-            WrappedColored(DimColor, CraftedPendingText);
-        if (goalsPending)
-            WrappedColored(DimColor, GoalsPendingText);
+        if (craftedPending || goalsPending)
+        {
+            if (recipes is LuminaRecipeData { IsResultIndexFailed: true })
+                WrappedColored(WarningColor, RecipesFailedText);
+            else
+            {
+                if (craftedPending)
+                    WrappedColored(DimColor, CraftedPendingText);
+                if (goalsPending)
+                    WrappedColored(DimColor, GoalsPendingText);
+            }
+        }
         foreach (var problem in goalProblems)
             WrappedColored(WarningColor, $"{Name(problem.ItemId)}: {problem.Error}");
     }
@@ -456,6 +485,12 @@ public sealed class ListWindow : Window, IDisposable
                     }
                     ImGui.TableNextColumn();
                     ImGui.TextUnformatted(Name(r.ItemId));
+                    // A set lookup once the item index is built (no sheet read); unknown items are treated as marketable, so no suffix.
+                    if (!service.IsMarketable(r.ItemId))
+                    {
+                        ImGui.SameLine(0, 0);
+                        ImGui.TextDisabled(NotOnMarketSuffix);
+                    }
                     ImGui.TableNextColumn();
                     ImGui.TextUnformatted(r.Quantity.ToString("N0"));
 
@@ -659,10 +694,12 @@ public sealed class ListWindow : Window, IDisposable
 
     private void PersistExclusions()
     {
+        userEdited = true;
         // Artisan and custom lists are remembered; pasted text has no stable id.
         if (artisanListId is int id)
         {
             config.ExcludedItemsByList[id] = new HashSet<uint>(session.ExportExclusions());
+            config.IncludedItemsByList[id] = new HashSet<uint>(session.ExportIncludes());
             config.Save();
         }
         else if (customListId != null && config.FindCustomList(customListId) is { } saved)
@@ -696,7 +733,8 @@ public sealed class ListWindow : Window, IDisposable
         }
         else
         {
-            ImGui.BeginDisabled(!loggedIn || rows.Count == 0);
+            // Pricing only the plain rows while the goals' materials are missing would give a result with no sign of it.
+            ImGui.BeginDisabled(!loggedIn || rows.Count == 0 || goalsPending);
             try
             {
                 if (ImGui.Button("Build shopping list")) StartBuild();
@@ -705,6 +743,8 @@ public sealed class ListWindow : Window, IDisposable
             {
                 ImGui.EndDisabled();
             }
+            if (goalsPending && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip(GoalsPendingBuildTooltip);
         }
 
         if (progressText.Length > 0)

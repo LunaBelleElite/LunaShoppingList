@@ -10,12 +10,25 @@ public sealed class ShoppingListService
     private readonly IWorldData _worlds;
     private readonly IUniversalisClient _universalis;
 
+    private readonly Func<uint, bool>? _isMarketable;
+
     /// <summary>Creates the service over the game's world data and a Universalis client.</summary>
-    public ShoppingListService(IWorldData worlds, IUniversalisClient universalis)
+    /// <param name="worlds">The game's world data.</param>
+    /// <param name="universalis">The Universalis client.</param>
+    /// <param name="isMarketable">
+    /// Whether an item can be sold on the market board. Items it rejects are never sent to Universalis and are reported in
+    /// <see cref="OfferBook.NotOnMarket"/>. Null treats every item as marketable (no item is ever skipped). It should answer
+    /// true whenever it does not know, so an item is never left unpriced on a guess.
+    /// </param>
+    public ShoppingListService(IWorldData worlds, IUniversalisClient universalis, Func<uint, bool>? isMarketable = null)
     {
         _worlds = worlds;
         _universalis = universalis;
+        _isMarketable = isMarketable;
     }
+
+    /// <summary>Whether <paramref name="itemId"/> is treated as sold on the market board: the check given to the constructor, or true without one.</summary>
+    public bool IsMarketable(uint itemId) => _isMarketable?.Invoke(itemId) ?? true;
 
     /// <summary>
     /// Builds a shopping plan for <paramref name="requirements"/>.
@@ -57,7 +70,29 @@ public sealed class ShoppingListService
         CancellationToken ct)
     {
         var (merged, allowedWorldIds) = await FetchListingsAsync(requirements, scope, exclusions, progress, ct).ConfigureAwait(false);
-        return OfferBookBuilder.Build(requirements, merged, allowedWorldIds, exclusions);
+
+        // Needed, non-excluded items not sold on the market board: kept out of the offers (so they never count as unmet)
+        // and reported on their own. Merged per item like the offer book, in first-appearance order. Excluded items stay in Skipped.
+        var notOnMarket = new List<Requirement>();
+        var offMarketIds = new HashSet<uint>();
+        foreach (var r in requirements)
+        {
+            if (r.Quantity <= 0 || exclusions.IsExcluded(r.ItemId) || IsMarketable(r.ItemId))
+                continue;
+            var at = notOnMarket.FindIndex(n => n.ItemId == r.ItemId);
+            if (at < 0)
+            {
+                notOnMarket.Add(r);
+                offMarketIds.Add(r.ItemId);
+            }
+            else
+            {
+                notOnMarket[at] = r with { Quantity = (int)Math.Min((long)notOnMarket[at].Quantity + r.Quantity, int.MaxValue) };
+            }
+        }
+
+        var forOffers = offMarketIds.Count == 0 ? requirements : requirements.Where(r => !offMarketIds.Contains(r.ItemId)).ToList();
+        return OfferBookBuilder.Build(forOffers, merged, allowedWorldIds, exclusions) with { NotOnMarket = notOnMarket };
     }
 
     /// <summary>
@@ -80,9 +115,9 @@ public sealed class ShoppingListService
         var resolved = TravelScopeResolver.Resolve(scope, current, _worlds.AllWorlds);
         var allowedWorldIds = resolved.Worlds.Select(w => w.Id).ToHashSet();
 
-        // Items worth looking up: positive total quantity and not excluded.
+        // Items worth looking up: positive total quantity, not excluded, and sold on the market board.
         var lookUp = requirements
-            .Where(r => r.Quantity > 0 && !exclusions.IsExcluded(r.ItemId))
+            .Where(r => r.Quantity > 0 && !exclusions.IsExcluded(r.ItemId) && IsMarketable(r.ItemId))
             .Select(r => r.ItemId)
             .Distinct()
             .OrderBy(id => id)

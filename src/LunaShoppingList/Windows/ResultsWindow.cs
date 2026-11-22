@@ -31,6 +31,8 @@ public sealed class ResultsWindow : Window
     private const int VisibleOptionRows = 8;
 
     private OfferBook book;
+    // The note for the items that are not sold on the market board, built once per book instead of every frame.
+    private string notOnMarketText = string.Empty;
     private AllocationState state = null!;
     private RouteSummary? summary;
     private Dictionary<uint, Row[]> rows = new();
@@ -105,6 +107,8 @@ public sealed class ResultsWindow : Window
 
     private void Commit(Computed c)
     {
+        // First, so a failure here leaves the previous book and state untouched.
+        notOnMarketText = c.Book.NotOnMarket.Count > 0 ? NotOnMarketNote.Text(c.Book.NotOnMarket, Name) : string.Empty;
         book = c.Book;
         planOptions = c.Options;
         applied = c.Applied;
@@ -452,6 +456,21 @@ public sealed class ResultsWindow : Window
             ImGui.TextUnformatted("Skipped (you excluded these)");
             foreach (var s in book.Skipped)
                 ImGui.BulletText($"{Name(s.ItemId)} x{s.Quantity:N0}");
+        }
+
+        // Items that cannot be bought on the market board were not priced; they are not "short" and not in any count above.
+        if (book.NotOnMarket.Count > 0)
+        {
+            ImGui.Separator();
+            ImGui.PushTextWrapPos(0f);
+            try
+            {
+                ImGui.TextDisabled(notOnMarketText);
+            }
+            finally
+            {
+                ImGui.PopTextWrapPos();
+            }
         }
 
         ImGui.Separator();

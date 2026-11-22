@@ -46,23 +46,10 @@ public static class ArtisanListExport
     /// </remarks>
     public static ArtisanExportResult Build(string name, IReadOnlyList<Requirement> rows, IRecipeLookup recipes)
     {
-        var roots = new List<Requirement>();
-        var skipped = new List<uint>();
-
-        foreach (var row in rows ?? Array.Empty<Requirement>())
-        {
-            if (row is null || row.ItemId == 0 || row.Quantity < 1)
-                continue;
-
-            var recipe = recipes.FindRecipeForItem(row.ItemId);
-            if (recipe is null || recipe.RecipeId == 0)
-            {
-                if (!skipped.Contains(row.ItemId))
-                    skipped.Add(row.ItemId);
-                continue;
-            }
-            roots.Add(row);
-        }
+        // The same craftable rule as the Teamcraft export (ExportFilter), so the two cannot disagree.
+        var filtered = ExportFilter.CraftableOnly(rows, recipes);
+        var roots = filtered.Rows;
+        var skipped = filtered.SkippedItemIds.ToList();
 
         if (roots.Count == 0)
             return new ArtisanExportResult(string.Empty, 0, skipped);
@@ -141,6 +128,18 @@ public static class ArtisanListExport
         {
             return Fail(null, unmatched, "That is not an Artisan list (the text is not valid JSON).");
         }
+        catch (ArgumentException)
+        {
+            // Raw lone surrogate(s) in the text: not encodable as UTF-8. Read it again with each one replaced by U+FFFD.
+            try
+            {
+                doc = JsonDocument.Parse(ReplaceLoneSurrogates(json), new JsonDocumentOptions { MaxDepth = 64 });
+            }
+            catch (Exception e) when (e is JsonException or ArgumentException)
+            {
+                return Fail(null, unmatched, "That is not an Artisan list (the text is not valid JSON).");
+            }
+        }
 
         using (doc)
         {
@@ -148,7 +147,7 @@ public static class ArtisanListExport
             if (root.ValueKind != JsonValueKind.Object)
                 return Fail(null, unmatched, "That is not an Artisan list (expected one JSON object).");
 
-            string? name = root.TryGetProperty("Name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null;
+            string? name = root.TryGetProperty("Name", out var n) && n.ValueKind == JsonValueKind.String ? ReadName(n) : null;
 
             if (!root.TryGetProperty("Recipes", out var recipesElement) || !TryEnumerate(recipesElement, out var entries))
                 return Fail(name, unmatched, "That is not an Artisan list (it has no Recipes).");
@@ -189,6 +188,30 @@ public static class ArtisanListExport
 
             return new ArtisanImportResult(name, order.Select(id => new Requirement(id, (int)totals[id])).ToList(), unmatched, null);
         }
+    }
+
+    /// <summary>The name, or null when it holds an escaped lone surrogate and cannot be read as text.</summary>
+    private static string? ReadName(JsonElement element)
+    {
+        try
+        {
+            return element.GetString();
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private static string ReplaceLoneSurrogates(string text)
+    {
+        var chars = text.ToCharArray();
+        for (var i = 0; i < chars.Length; i++)
+        {
+            if (char.IsHighSurrogate(chars[i]) && i + 1 < chars.Length && char.IsLowSurrogate(chars[i + 1])) i++;
+            else if (char.IsSurrogate(chars[i])) chars[i] = (char)0xFFFD;
+        }
+        return new string(chars);
     }
 
     private static ArtisanImportResult Fail(string? name, List<string> unmatched, string error)

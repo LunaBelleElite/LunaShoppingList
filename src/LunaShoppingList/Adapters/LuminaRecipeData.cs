@@ -11,8 +11,11 @@ public sealed class LuminaRecipeData : IRecipeData, IRecipeLookup
     private readonly ExcelSheet<Recipe> sheet;
     private readonly Lazy<Dictionary<uint, uint>> recipeByResult;
 
-    public LuminaRecipeData(IDataManager data)
+    private readonly IPluginLog? log;
+
+    public LuminaRecipeData(IDataManager data, IPluginLog? log = null)
     {
+        this.log = log;
         sheet = data.GetExcelSheet<Recipe>();
         recipeByResult = new Lazy<Dictionary<uint, uint>>(BuildResultIndex, LazyThreadSafetyMode.PublicationOnly);
     }
@@ -22,6 +25,10 @@ public sealed class LuminaRecipeData : IRecipeData, IRecipeLookup
 
     private readonly object warmUpGate = new();
     private Task? warmUp;
+    private volatile bool resultIndexFailed;
+
+    /// <summary>True after a warm-up failed, until a later attempt starts. A failure is logged once per attempt.</summary>
+    internal bool IsResultIndexFailed => resultIndexFailed;
 
     /// <summary>
     /// Builds the item-to-recipe index on the thread pool unless it exists or is already being built, so no game
@@ -33,15 +40,18 @@ public sealed class LuminaRecipeData : IRecipeData, IRecipeLookup
         {
             if (recipeByResult.IsValueCreated || warmUp is { IsCompleted: false })
                 return;
+            resultIndexFailed = false;
             warmUp = Task.Run(() =>
             {
                 try
                 {
                     _ = recipeByResult.Value;
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // The index stays unbuilt; the caller's note stays up and a later WarmUp tries again.
+                    // The index stays unbuilt and a later WarmUp tries again; the windows show the failure meanwhile.
+                    resultIndexFailed = true;
+                    log?.Error(ex, "Could not build the recipe index");
                 }
             });
         }
