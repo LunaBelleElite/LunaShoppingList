@@ -3,7 +3,7 @@
     "Author": "LunaBelleElite",
     "Name": "Luna Shopping List",
     "InternalName": "LunaShoppingList",
-    "AssemblyVersion": "0.8.0.0",
+    "AssemblyVersion": "0.10.0.1",
     "Description": "Builds a price-optimised shopping list, grouped by world, from an Artisan crafting list using current Universalis prices.",
     "Punchline": "Builds a price-optimised shopping list from an Artisan crafting list.",
     "Tags": [
@@ -21,10 +21,10 @@
     "IsHide": false,
     "IsTestingExclusive": false,
     "DownloadCount": 0,
-    "LastUpdate": 1795325231,
-    "Changelog": "\n- My shopping lists has a new Add with subcrafts button, beside Quantity and Add. It takes the item you picked, works out every crafting level down to the raw materials (crystals included), adds up the amounts and puts only those materials on the list. The item itself and the intermediate crafts aren't added. Where several recipes make an item, it uses the first one it finds. The button is greyed out for items that can't be crafted.\n- Plain Add still puts the item itself on the list, to buy as it is.\n- The per-row Add ingredients button is gone. It swapped a craftable row for one level of ingredients, and Add with subcrafts does that job properly. Each row now has just Remove.\n- Items that vendors also sell are still broken down all the way.",
-    "DownloadLinkInstall": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.8.0.0/latest.zip",
-    "DownloadLinkUpdate": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.8.0.0/latest.zip",
-    "DownloadLinkTesting": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.8.0.0/latest.zip"
+    "LastUpdate": 1795367705,
+    "Changelog": "This covers everything since 0.8.0.0.\n\n- The Paste tab is now Import / Export. Import takes a Teamcraft import link, an Artisan list (Artisan's Export List) or plain `Nx Item Name` lines, such as Teamcraft's Copy as Text. It says which one it found, skips section headers like \"Crystals :\", and lists lines it couldn't match. Then Save as shopping list (named, with an optional Break down into raw materials) or Open without saving.\n- Export: pick any list. Open in Teamcraft opens Teamcraft's import page in your browser. Copy Artisan list (My shopping lists only) copies a list that Artisan's Import List From Clipboard (Artisan Export) accepts, with every sub-craft. Share Teamcraft list copies a link to send to someone else; they open it as a website, because Teamcraft's own import dialog rejects it.\n- My shopping lists: Add with subcrafts now keeps the finished item as a goal. The shopping rows are your plain items plus the raw materials worked out from all goals together, so a part that two goals share is crafted once. Change a goal's quantity and the materials follow. Lists saved before this still work.\n- New Exclude crafted items checkbox next to Refresh on the Artisan crafting lists tab. Lists then open with crafted ingredients unticked, so you only buy raw materials.\n- New Check/uncheck all button in list windows, beside the crystals toggle.\n- Fixed: an item that can't be sold on the market board no longer breaks a price lookup. A pasted block of text could freeze the game; it doesn't any more. Item names ending in a space now match. Messages wrap in narrow windows instead of being cut off. Unloading the plugin is safer.\n- Not yet checked in the game: importing a Teamcraft link or an Artisan export back into the Import tab, Exclude crafted items, Check/uncheck all, removing goals, and old lists loading after the update.",
+    "DownloadLinkInstall": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.10.0.1/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.10.0.1/latest.zip",
+    "DownloadLinkTesting": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.10.0.1/latest.zip"
   }
 ]
