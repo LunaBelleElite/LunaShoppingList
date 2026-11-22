@@ -315,29 +315,78 @@ public class CustomListTests
         Assert.Equal(new[] { (10u, 1) }, Rows(l));
     }
 
+    private static List<Requirement> Req(params (uint item, int qty)[] rows)
+        => rows.Select(r => new Requirement(r.item, r.qty)).ToList();
+
     [Fact]
-    public void ReplaceItems_ChangedOrNewRowsLoseExclusion_UnchangedKeepIt()
+    public void AddMaterials_NewRowsAppendedInGivenOrder_ReturnsCount()
     {
-        var l = L("1", "A", (10, 5), (11, 2), (100, 1));
-        l.ExcludedItemIds.UnionWith(new uint[] { 10, 11, 12, 100 });
-        var rows = new List<CustomListItem>
-        {
-            new() { ItemId = 10, Quantity = 7 },
-            new() { ItemId = 11, Quantity = 2 },
-            new() { ItemId = 12, Quantity = 3 },
-        };
-        CustomListOps.ReplaceItems(l, rows);
-        Assert.Equal(new[] { (10u, 7), (11u, 2), (12u, 3) }, Rows(l));
-        Assert.Equal(new uint[] { 11 }, l.ExcludedItemIds.ToArray());
+        var l = L("1", "A", (10, 1));
+        var n = CustomListOps.AddMaterials(l, Req((30, 2), (20, 3)));
+        Assert.Equal(2, n);
+        Assert.Equal(new[] { (10u, 1), (30u, 2), (20u, 3) }, Rows(l));
     }
 
     [Fact]
-    public void ReplaceItems_CopiesTheRowList()
+    public void AddMaterials_ExistingRowKeepsPositionAndSums()
+    {
+        var l = L("1", "A", (10, 5), (11, 2));
+        var n = CustomListOps.AddMaterials(l, Req((11, 3), (10, 1)));
+        Assert.Equal(2, n);
+        Assert.Equal(new[] { (10u, 6), (11u, 5) }, Rows(l));
+    }
+
+    [Fact]
+    public void AddMaterials_SumSaturatesAtMaxQuantity()
+    {
+        var l = L("1", "A", (10, 9_000_000));
+        Assert.Equal(1, CustomListOps.AddMaterials(l, Req((10, 5_000_000))));
+        Assert.Equal(new[] { (10u, 9_999_999) }, Rows(l));
+    }
+
+    [Fact]
+    public void AddMaterials_ClearsExclusionOnlyForNewOrChangedRows()
+    {
+        var l = L("1", "A", (10, 5), (11, 2), (12, CustomListOps.MaxQuantity));
+        l.ExcludedItemIds.UnionWith(new uint[] { 10, 11, 12, 13 });
+        var n = CustomListOps.AddMaterials(l, Req((10, 1), (12, 4), (13, 2)));
+        Assert.Equal(2, n);
+        Assert.Equal(new uint[] { 11, 12 }, l.ExcludedItemIds.OrderBy(x => x).ToArray());
+        Assert.Equal(new[] { (10u, 6), (11u, 2), (12u, CustomListOps.MaxQuantity), (13u, 2) }, Rows(l));
+    }
+
+    [Fact]
+    public void AddMaterials_AlreadySaturatedRow_IsNotCountedAndKeepsExclusion()
+    {
+        var l = L("1", "A", (10, CustomListOps.MaxQuantity));
+        l.ExcludedItemIds.Add(10);
+        Assert.Equal(0, CustomListOps.AddMaterials(l, Req((10, 7))));
+        Assert.Contains(10u, l.ExcludedItemIds);
+    }
+
+    [Fact]
+    public void AddMaterials_SkipsItemZeroAndQuantityBelowOne()
+    {
+        var l = L("1", "A");
+        Assert.Equal(1, CustomListOps.AddMaterials(l, Req((0, 5), (10, 0), (11, -3), (12, 1))));
+        Assert.Equal(new[] { (12u, 1) }, Rows(l));
+    }
+
+    [Fact]
+    public void AddMaterials_NothingToAdd_ReturnsZero()
     {
         var l = L("1", "A", (10, 1));
-        var rows = new List<CustomListItem> { new() { ItemId = 20, Quantity = 2 } };
-        CustomListOps.ReplaceItems(l, rows);
-        rows.Clear();
-        Assert.Equal(new[] { (20u, 2) }, Rows(l));
+        Assert.Equal(0, CustomListOps.AddMaterials(l, Req()));
+        Assert.Equal(new[] { (10u, 1) }, Rows(l));
+    }
+
+    [Fact]
+    public void AddMaterials_ThenPruneExclusions_KeepsExclusionsOfRowsStillThere()
+    {
+        var l = L("1", "A", (10, 1), (11, 1));
+        l.ExcludedItemIds.UnionWith(new uint[] { 10, 99 });
+        CustomListOps.AddMaterials(l, Req((11, 2)));
+        Assert.Equal(1, CustomListOps.PruneExclusions(l));
+        Assert.Equal(new uint[] { 10 }, l.ExcludedItemIds.ToArray());
     }
 }

@@ -18,7 +18,7 @@ public sealed class ListBrowserWindow : Window
     private const int PasteMaxLength = 50000;
     private const int SearchMaxLength = 100;
     private const int SearchResultCount = 10;
-    private const string ExpandTooltip = "Replaces this row with its recipe ingredients (first recipe found when several make it)";
+    private const string AddWithSubcraftsTooltip = "Adds everything needed to craft this, down to the materials you gather or buy. The item itself is not added. Where several recipes make an item, the first recipe found is used.";
     private const string NotCraftableText = "This item cannot be crafted";
     // The text boxes count UTF-8 bytes; the 60-character name limit itself is checked when the name is used.
     private const int NameBoxMaxBytes = CustomListOps.MaxNameLength * 4;
@@ -56,8 +56,10 @@ public sealed class ListBrowserWindow : Window
     // A row quantity changed in memory but not saved yet (the edit is still in progress).
     private string? unsavedListId;
     private readonly Dictionary<uint, string> itemNames = new();
-    // Whether an item has a recipe, filled once per item (recipes never change while the game runs).
-    private readonly Dictionary<uint, bool> hasRecipe = new();
+    // Whether the picked item has a recipe: null while unknown, looked up once per pick.
+    private bool? pickedCraftable;
+    // A success note shown in the message area until the next action.
+    private string notice = string.Empty;
 
     internal ListBrowserWindow(Configuration config, IArtisanListSource artisan, IItemInfo items, IItemCatalog catalog,
         IRecipeLookup recipes, WindowManager manager, IPluginLog log)
@@ -122,6 +124,7 @@ public sealed class ListBrowserWindow : Window
                     {
                         // Leaving the tab cancels a pending delete and saves an unfinished quantity edit.
                         deletePending = false;
+                        notice = string.Empty;
                         FlushUnsaved();
                     }
                     if (ImGui.BeginTabItem("Paste"))
@@ -145,11 +148,17 @@ public sealed class ListBrowserWindow : Window
         catch (Exception ex)
         {
             log.Error(ex, "Drawing the list browser failed");
-            message = "Something went wrong: " + ex.Message;
+            SetMessage("Something went wrong: " + ex.Message);
         }
 
         if (message.Length > 0)
             ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f), message);
+    }
+
+    private void SetMessage(string text)
+    {
+        message = text;
+        notice = string.Empty;
     }
 
     private void DrawMyLists()
@@ -198,7 +207,7 @@ public sealed class ListBrowserWindow : Window
     {
         try
         {
-            message = string.Empty;
+            SetMessage(string.Empty);
             lists = artisan.GetLists();
             hiddenCount = artisan is ArtisanListSource source ? source.HiddenListCount : 0;
             config.PruneExcludedLists(lists.Select(l => l.Id));
@@ -206,16 +215,23 @@ public sealed class ListBrowserWindow : Window
         catch (ArtisanConfigUnreadableException ex)
         {
             log.Warning(ex, "Reading Artisan's lists failed");
-            message = UnreadableConfigText;
+            SetMessage(UnreadableConfigText);
         }
         catch (Exception ex)
         {
             log.Error(ex, "Reading Artisan's lists failed");
-            message = "Could not read the lists: " + ex.Message;
+            SetMessage("Could not read the lists: " + ex.Message);
         }
     }
 
     private void DrawCustomLists()
+    {
+        DrawCustomListsBody();
+        if (notice.Length > 0)
+            ImGui.TextColored(new Vector4(0.5f, 0.9f, 0.5f, 1f), notice);
+    }
+
+    private void DrawCustomListsBody()
     {
         DrawCreate();
         DrawSavedLists();
@@ -366,7 +382,10 @@ public sealed class ListBrowserWindow : Window
             ImGui.SetNextItemWidth(-1);
             // A new search drops the picked item, so Add never adds something no longer shown.
             if (ImGui.InputTextWithHint("##itemSearch", "Type an item name...", ref searchText, SearchMaxLength))
+            {
+                notice = string.Empty;
                 ClearPicked();
+            }
             enterPressed = ImGui.IsItemFocused()
                 && (ImGui.IsKeyPressed(ImGuiKey.Enter, false) || ImGui.IsKeyPressed(ImGuiKey.KeypadEnter, false));
         }
@@ -402,13 +421,21 @@ public sealed class ListBrowserWindow : Window
             ImGui.TextUnformatted(pickedLabel);
 
         var style = ImGui.GetStyle();
+        var subLabel = "Add with subcrafts";
+        // Measured before the row is drawn: once a widget is drawn the cursor has moved on.
+        var lineAvail = ImGui.GetContentRegionAvail().X;
+        var quantityWidth = ImGui.CalcTextSize("Quantity").X;
         ImGui.AlignTextToFramePadding();
         ImGui.TextUnformatted("Quantity");
         ImGui.SameLine();
-        var rest = ImGui.GetContentRegionAvail().X - ButtonWidth("Add") - style.ItemSpacing.X;
-        ImGui.SetNextItemWidth(Math.Clamp(rest, 60f, 160f));
+        var rest = lineAvail - quantityWidth - ButtonWidth("Add") - ButtonWidth(subLabel) - style.ItemSpacing.X * 3;
+        var boxWidth = Math.Clamp(rest, 60f, 160f);
+        ImGui.SetNextItemWidth(boxWidth);
         if (ImGui.InputInt("##addQuantity", ref addQuantity, 1, 100))
+        {
             addQuantity = CustomListOps.ClampQuantity(addQuantity);
+            notice = string.Empty;
+        }
         ImGui.SameLine();
         ImGui.BeginDisabled(pickedItemId == 0);
         try
@@ -420,6 +447,23 @@ public sealed class ListBrowserWindow : Window
         {
             ImGui.EndDisabled();
         }
+
+        // On a narrow window the second button wraps to the next line instead of being clipped.
+        var used = quantityWidth + style.ItemSpacing.X + boxWidth + style.ItemSpacing.X + ButtonWidth("Add");
+        NextInRow(ref used, lineAvail, subLabel);
+        var craftable = pickedItemId == 0 ? null : PickedCraftable();
+        ImGui.BeginDisabled(pickedItemId == 0 || craftable == false);
+        try
+        {
+            if (ImGui.Button(subLabel + "##addSub"))
+                AddPickedWithSubcrafts(list);
+        }
+        finally
+        {
+            ImGui.EndDisabled();
+        }
+        if (pickedItemId != 0 && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(craftable == false ? NotCraftableText : AddWithSubcraftsTooltip);
     }
 
     private void DrawListItems(CustomList list)
@@ -432,7 +476,6 @@ public sealed class ListBrowserWindow : Window
         }
 
         uint removeId = 0;
-        uint expandId = 0;
         var commitQuantity = false;
         var tableOpen = ImGui.BeginTable("##customItems", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Resizable);
         try
@@ -444,11 +487,10 @@ public sealed class ListBrowserWindow : Window
                 ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch, 1f);
                 ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed,
                     ImGui.CalcTextSize("9,999,999").X + style.FramePadding.X * 2 + (ImGui.GetFrameHeight() + style.ItemInnerSpacing.X) * 2 + padding);
-                ImGui.TableSetupColumn("##actions", ImGuiTableColumnFlags.WidthFixed,
-                    ButtonWidth("Remove") + style.ItemSpacing.X + ButtonWidth("Add ingredients") + padding);
+                ImGui.TableSetupColumn("##actions", ImGuiTableColumnFlags.WidthFixed, ButtonWidth("Remove") + padding);
                 ImGui.TableHeadersRow();
 
-                // Rows are only read here; a removal or expansion is applied after the loop.
+                // Rows are only read here; a removal is applied after the loop.
                 for (var i = 0; i < list.Items.Count; i++)
                 {
                     var row = list.Items[i];
@@ -467,6 +509,7 @@ public sealed class ListBrowserWindow : Window
                         {
                             CustomListOps.SetQuantity(list, row.ItemId, qty);
                             unsavedListId = list.Id;
+                            notice = string.Empty;
                         }
                         // Typed edits are saved when the box is left; a step-button click is saved at once.
                         if (ImGui.IsItemDeactivatedAfterEdit() || (changed && !ImGui.IsItemActive()))
@@ -475,20 +518,6 @@ public sealed class ListBrowserWindow : Window
                         ImGui.TableNextColumn();
                         if (ImGui.SmallButton("Remove"))
                             removeId = row.ItemId;
-                        ImGui.SameLine();
-                        var craftable = IsCraftable(row.ItemId);
-                        ImGui.BeginDisabled(craftable == false);
-                        try
-                        {
-                            if (ImGui.SmallButton("Add ingredients"))
-                                expandId = row.ItemId;
-                        }
-                        finally
-                        {
-                            ImGui.EndDisabled();
-                        }
-                        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                            ImGui.SetTooltip(craftable == false ? NotCraftableText : ExpandTooltip);
                     }
                     finally
                     {
@@ -507,8 +536,6 @@ public sealed class ListBrowserWindow : Window
             Commit(list);
         if (removeId != 0)
             RemoveRow(list, removeId);
-        else if (expandId != 0)
-            ExpandRow(list, expandId);
     }
 
     /// <summary>The selected list, or null. A selected list that no longer exists (deleted, or settings reloaded) clears the selection.</summary>
@@ -530,6 +557,7 @@ public sealed class ListBrowserWindow : Window
         if (id == selectedListId)
             return;
         FlushUnsaved();
+        notice = string.Empty;
         selectedListId = id;
         renaming = false;
         renameText = string.Empty;
@@ -542,12 +570,15 @@ public sealed class ListBrowserWindow : Window
     {
         pickedItemId = 0;
         pickedLabel = string.Empty;
+        pickedCraftable = null;
     }
 
     private void Pick(ItemSearchEntry entry)
     {
         deletePending = false;
+        notice = string.Empty;
         pickedItemId = entry.ItemId;
+        pickedCraftable = null;
         pickedLabel = "Selected: " + entry.Name;
     }
 
@@ -570,10 +601,10 @@ public sealed class ListBrowserWindow : Window
         var result = CustomListOps.Create(config.CustomLists, newListName);
         if (result.List is not { } created)
         {
-            message = result.Error ?? "Could not create the list";
+            SetMessage(result.Error ?? "Could not create the list");
             return;
         }
-        message = string.Empty;
+        SetMessage(string.Empty);
         config.CustomLists.Add(created);
         config.Save();
         newListName = string.Empty;
@@ -587,10 +618,10 @@ public sealed class ListBrowserWindow : Window
         var result = CustomListOps.Rename(config.CustomLists, list, renameText);
         if (!result.Ok)
         {
-            message = result.Error ?? "Could not rename the list";
+            SetMessage(result.Error ?? "Could not rename the list");
             return;
         }
-        message = string.Empty;
+        SetMessage(string.Empty);
         renaming = false;
         // Only the titles change: a running build in the list's window keeps going.
         config.Save();
@@ -600,7 +631,7 @@ public sealed class ListBrowserWindow : Window
     private void ShopFor(CustomList list)
     {
         deletePending = false;
-        message = string.Empty;
+        SetMessage(string.Empty);
         FlushUnsaved();
         manager.OpenCustomList(list.Id);
     }
@@ -608,7 +639,7 @@ public sealed class ListBrowserWindow : Window
     private void DeleteList(CustomList list)
     {
         deletePending = false;
-        message = string.Empty;
+        SetMessage(string.Empty);
         var id = list.Id;
         if (unsavedListId == id)
             unsavedListId = null;
@@ -621,7 +652,7 @@ public sealed class ListBrowserWindow : Window
     private void AddPicked(CustomList list)
     {
         deletePending = false;
-        message = string.Empty;
+        SetMessage(string.Empty);
         CustomListOps.AddItem(list, pickedItemId, addQuantity);
         Commit(list);
         ClearPicked();
@@ -632,27 +663,33 @@ public sealed class ListBrowserWindow : Window
     private void RemoveRow(CustomList list, uint itemId)
     {
         deletePending = false;
-        message = string.Empty;
+        SetMessage(string.Empty);
         CustomListOps.RemoveItem(list, itemId);
         CustomListOps.PruneExclusions(list);
         Commit(list);
     }
 
-    private void ExpandRow(CustomList list, uint itemId)
+    private void AddPickedWithSubcrafts(CustomList list)
     {
         deletePending = false;
-        // The recipe lookup runs here, on the click, never per frame.
-        hasRecipe[itemId] = recipes.FindRecipeForItem(itemId) != null;
-        var result = RecipeExpander.ExpandOnce(recipes, list, itemId);
-        if (result.Items is not { } expanded)
+        SetMessage(string.Empty);
+        // The recipe expansion runs here, on the click, never per frame.
+        var result = RecipeExpander.ExpandToMaterials(recipes, pickedItemId, addQuantity);
+        if (!result.Ok)
         {
-            message = result.Error ?? "Could not add the ingredients";
+            SetMessage(result.Error ?? "Could not add the materials");
             return;
         }
-        message = string.Empty;
-        // Rows that gained ingredients are no longer excluded, so the added amount is bought.
-        CustomListOps.ReplaceItems(list, expanded);
+        var added = CustomListOps.AddMaterials(list, result.Items!);
+        CustomListOps.PruneExclusions(list);
         Commit(list);
+        var count = result.Items!.Count;
+        notice = added == 0
+            ? "Nothing added: every material is already at the maximum."
+            : $"Added {count} {(count == 1 ? "material" : "materials")} for {ItemName(pickedItemId)} x{addQuantity}";
+        ClearPicked();
+        searchText = string.Empty;
+        addQuantity = 1;
     }
 
     /// <summary>Saves the settings and makes an open window for the list read it again.</summary>
@@ -681,23 +718,22 @@ public sealed class ListBrowserWindow : Window
         catch (Exception ex)
         {
             log.Error(ex, "Saving a list quantity failed");
-            message = "Could not save the list: " + ex.Message;
+            SetMessage("Could not save the list: " + ex.Message);
         }
     }
 
     /// <summary>
-    /// True or false once known; null while unknown. An unknown item is looked up only when the recipe index already
-    /// exists (a dictionary lookup, once per item); before that the first 'Add ingredients' click builds the index.
+    /// True or false once known for the picked item; null while unknown. Looked up only when the recipe index already
+    /// exists (a dictionary lookup, once per pick); before that the click builds the index.
     /// </summary>
-    private bool? IsCraftable(uint itemId)
+    private bool? PickedCraftable()
     {
-        if (hasRecipe.TryGetValue(itemId, out var known))
-            return known;
+        if (pickedCraftable != null)
+            return pickedCraftable;
         if (recipes is not LuminaRecipeData { IsResultIndexReady: true })
             return null;
-        var craftable = recipes.FindRecipeForItem(itemId) != null;
-        hasRecipe[itemId] = craftable;
-        return craftable;
+        pickedCraftable = recipes.FindRecipeForItem(pickedItemId) != null;
+        return pickedCraftable;
     }
 
     private string ItemName(uint itemId)
@@ -782,7 +818,7 @@ public sealed class ListBrowserWindow : Window
     {
         try
         {
-            message = string.Empty;
+            SetMessage(string.Empty);
             var result = PasteParser.Parse(pasteText, items);
             parsed = result.Requirements;
             unmatchedLines = result.UnmatchedLines;
@@ -790,7 +826,7 @@ public sealed class ListBrowserWindow : Window
         catch (Exception ex)
         {
             log.Error(ex, "Parsing pasted ingredients failed");
-            message = "Could not parse the text: " + ex.Message;
+            SetMessage("Could not parse the text: " + ex.Message);
         }
     }
 
@@ -798,13 +834,13 @@ public sealed class ListBrowserWindow : Window
     {
         try
         {
-            message = string.Empty;
+            SetMessage(string.Empty);
             manager.OpenPasted(parsed);
         }
         catch (Exception ex)
         {
             log.Error(ex, "Opening the pasted list failed");
-            message = "Could not open the list: " + ex.Message;
+            SetMessage("Could not open the list: " + ex.Message);
         }
     }
 }

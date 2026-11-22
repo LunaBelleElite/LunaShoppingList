@@ -31,38 +31,63 @@ Dalamud warns you about third-party repositories when you add one, and it's
 right to. Anyone can publish a plugin this way, so only add repositories from
 people you trust.
 
-## From a list to a route
+## How to use each part
 
-1. Type `/lsl`. A list browser opens with three tabs: **Artisan crafting
-   lists**, which is your Artisan lists plus a filter box, **My shopping
-   lists** for lists you put together yourself, and **Paste**.
-2. Click a list and it gets its own window with its ingredients. Open as many
-   as you like at once. If a column is too narrow, drag its border. The
-   **On you** and **Retainers** columns show how many of each item you already
-   hold. Hover a Retainers number to see which retainer has it, and whether
-   it's in their inventory, their crystals or up on the market board. The
-   **Vendor** column shows when an NPC also sells the item, for gil or for
-   something like Bicolor Gemstones, tomestones or scrips. Hover it for the
-   vendor's name and where they stand.
-3. Choose where you're willing to shop. The cross-world choice has been tried
-   from a North American world, and worlds from several North American data
-   centers showed up.
-4. Press Build. Prices come from Universalis, and the list gets a separate
-   results window: each item with the total you need and the worlds you could
-   buy it on.
-5. In the **Plan options** panel, the **Willing to pay extra** slider takes a
-   percent over the cheapest total, or an amount of gil. It picks the plan that
-   visits the fewest worlds within that budget and lists every option with its
-   extra cost, so you can click a different one. Slide it to zero for the
-   cheapest plan. Type a quantity in yourself and the totals follow, and the
-   header then says the plan was edited by hand. Click an item's name in the
-   route list and it's copied, so you can paste it wherever you need it.
+Type `/lsl` and the list browser opens, with three tabs. Pick a list from any
+of them and it gets its own window. Build in that window opens a results
+window. You can have several of each open at once.
 
-To make your own list, name it on **My shopping lists**, type an item, pick it
-from the suggestions, set how many and press Add. Only items that sell on the
-market board are offered. Lists are saved for renaming, editing or deleting
-later, a craftable item can be swapped for its ingredients, and from step 2 on
-it works like an Artisan list.
+**Artisan crafting lists tab.** Your Artisan lists are shown here.
+
+- Click one to open it. Type in the filter box to narrow the names.
+- Refresh re-reads them from Artisan.
+
+**My shopping lists tab.** Lists you put together yourself.
+
+1. Name the list and press Create.
+2. Select it, type an item name and pick it from the suggestions. Only items
+   that sell on the market board are offered.
+3. Set the quantity. **Add** puts the item itself on the list, to buy as it is.
+   **Add with subcrafts** works out every level of crafting down to the raw
+   materials, crystals included, adds up the amounts and puts only those
+   materials on the list, not the item or the crafts in between. Where several
+   recipes make an item it uses the first one it finds, and the button is greyed
+   out for anything that can't be crafted. Items a vendor also sells are still
+   broken down all the way.
+4. Change a quantity in the row, or press Remove to take the row off.
+5. Rename and Delete sit beside the list's name; Delete asks you to click
+   twice. **Shop for this list** opens it.
+
+**Paste tab.** Artisan has an export button for a plain-text ingredient list;
+paste what it gives you into the box and press Parse. Lines it couldn't match
+are listed, and **Open as shopping list** opens the rest. A pasted list isn't
+saved, so closing its window drops it.
+
+**A list window.** This is where you decide what to price.
+
+- **Where to shop** sets the worlds you're willing to buy from. It's one choice
+  shared by every list window.
+- Untick **Buy** on anything you don't need. Your choices are remembered for
+  Artisan and My shopping lists.
+- **On you** and **Retainers** show how many you already hold; hover Retainers
+  to see which retainer has it. The **Vendor** column shows when an NPC also
+  sells the item; hover it for the vendor and where they stand. Drag a column
+  border if it's too narrow.
+- Press **Build**. Prices come from Universalis and the results window opens.
+
+**The results window.** This is where you pick the route.
+
+- **Willing to pay extra** takes a percent over the cheapest total, or an
+  amount of gil. It picks the plan that visits the fewest worlds within that
+  budget. Click a different option in the list to use it, or slide to zero for
+  the cheapest.
+- Each item lists the worlds selling it. Type a quantity next to a world to
+  change what you buy there, and the totals follow. The header then says the
+  plan was edited by hand.
+- The route lists each world with what to buy there. Click an item's name and
+  it's copied, so you can paste it into the market board search.
+- Press Build again in the list window and the prices refresh. Your quantity
+  changes are reset, but the budget stays.
 
 ## What it won't do
 

@@ -107,18 +107,32 @@ public static class CustomListOps
     }
 
     /// <summary>
-    /// Replaces the list's rows (for example after adding a recipe's ingredients). A row that is new or whose quantity
-    /// changed is no longer excluded, so the added amount is not skipped; exclusions of rows no longer on the list are dropped.
+    /// Merges <paramref name="rows"/> into the list: an existing row keeps its position and gains the quantity (capped at
+    /// <see cref="MaxQuantity"/>), a new row is appended in the given order; rows with item id 0 or a quantity below 1
+    /// are skipped. A row that was new or whose quantity changed is no longer excluded, so the added amount is not
+    /// skipped. Returns how many rows were new or changed.
     /// </summary>
-    public static void ReplaceItems(CustomList list, IReadOnlyList<CustomListItem> rows)
+    public static int AddMaterials(CustomList list, IReadOnlyList<Requirement> rows)
     {
-        var before = new Dictionary<uint, int>();
-        foreach (var i in list.Items) before[i.ItemId] = i.Quantity;
-        list.Items = new List<CustomListItem>(rows);
-        foreach (var i in list.Items)
-            if (!before.TryGetValue(i.ItemId, out var q) || q != i.Quantity)
-                list.ExcludedItemIds.Remove(i.ItemId);
-        PruneExclusions(list);
+        var changed = 0;
+        foreach (var r in rows)
+        {
+            if (r.ItemId == 0 || r.Quantity < 1) continue;
+            var row = Find(list, r.ItemId);
+            if (row == null)
+            {
+                list.Items.Add(new CustomListItem { ItemId = r.ItemId, Quantity = ClampQuantity(r.Quantity) });
+            }
+            else
+            {
+                var sum = ClampQuantity((long)row.Quantity + r.Quantity);
+                if (sum == row.Quantity) continue;
+                row.Quantity = sum;
+            }
+            list.ExcludedItemIds.Remove(r.ItemId);
+            changed++;
+        }
+        return changed;
     }
 
     /// <summary>Clamps a quantity to 1..<see cref="MaxQuantity"/>.</summary>

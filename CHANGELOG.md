@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0.0 - 2026-11-22
+
+- My shopping lists has a new Add with subcrafts button, beside Quantity and Add. It takes the item you picked, works out every crafting level down to the raw materials (crystals included), adds up the amounts and puts only those materials on the list. The item itself and the intermediate crafts aren't added. Where several recipes make an item, it uses the first one it finds. The button is greyed out for items that can't be crafted.
+- Plain Add still puts the item itself on the list, to buy as it is.
+- The per-row Add ingredients button is gone. It swapped a craftable row for one level of ingredients, and Add with subcrafts does that job properly. Each row now has just Remove.
+- Items that vendors also sell are still broken down all the way.
+
 ## 0.7.0.0 - 2026-11-22
 
 This covers everything since 0.5.0.0.
