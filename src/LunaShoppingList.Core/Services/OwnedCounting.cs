@@ -30,6 +30,39 @@ public static class OwnedCounting
         return true;
     }
 
+    /// <summary>
+    /// Whether both hold the same counts in every container (a missing container equals an empty one). A <c>null</c> <paramref name="a"/>
+    /// (a record whose containers are not known) is never the same as anything.
+    /// </summary>
+    public static bool SamePlaces(IReadOnlyDictionary<RetainerPlace, IReadOnlyDictionary<uint, int>>? a, IReadOnlyDictionary<RetainerPlace, IReadOnlyDictionary<uint, int>> b)
+    {
+        ArgumentNullException.ThrowIfNull(b);
+        if (a is null)
+            return false;
+        foreach (var place in a.Keys.Union(b.Keys))
+        {
+            if (!SameCounts(a.TryGetValue(place, out var x) ? x : NoCounts, b.TryGetValue(place, out var y) ? y : NoCounts))
+                return false;
+        }
+        return true;
+    }
+
+    private static readonly IReadOnlyDictionary<uint, int> NoCounts = new Dictionary<uint, int>();
+
+    /// <summary>
+    /// Files <paramref name="r"/> in <paramref name="target"/> under <paramref name="capturedUtc"/>, keeping its containers when it has them
+    /// and its unplaced counts when it does not.
+    /// </summary>
+    public static void CopyRetainer(OwnedCache target, RetainerSnapshot r, DateTimeOffset capturedUtc)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(r);
+        if (r.Places is not null)
+            target.ReplaceRetainer(r.Id, r.Name, capturedUtc, r.Places);
+        else
+            target.ReplaceRetainer(r.Id, r.Name, capturedUtc, r.Stored, r.Market);
+    }
+
     /// <summary>A new cache holding the same snapshots as <paramref name="source"/>; later changes to either do not affect the other.</summary>
     public static OwnedCache Copy(OwnedCache source)
     {
@@ -38,7 +71,7 @@ public static class OwnedCounting
         if (source.Saddlebag is { } s)
             copy.ReplaceSaddlebag(s.CapturedUtc, s.Items);
         foreach (var r in source.Retainers)
-            copy.ReplaceRetainer(r.Id, r.Name, r.CapturedUtc, r.Stored, r.Market);
+            CopyRetainer(copy, r, r.CapturedUtc);
         return copy;
     }
 }
@@ -61,8 +94,7 @@ public sealed class RetainerVisitGate
     /// <summary>The gap between reads once a visit is confirmed.</summary>
     public const long RecheckMs = 3_000;
 
-    private IReadOnlyDictionary<uint, int>? _lastStored;
-    private IReadOnlyDictionary<uint, int>? _lastMarket;
+    private IReadOnlyDictionary<RetainerPlace, IReadOnlyDictionary<uint, int>>? _lastPlaces;
     private long _nextReadMs;
 
     /// <summary>The retainer currently open (0 = none).</summary>
@@ -73,7 +105,7 @@ public sealed class RetainerVisitGate
 
     /// <summary>
     /// Reports the open retainer (<paramref name="retainerId"/>, 0 when none) and whether its containers are ready to read.
-    /// Returns whether the caller should read them now and pass the result to <see cref="Offer"/>.
+    /// Returns whether the caller should read them now and pass the result to <see cref="Offer(IReadOnlyDictionary{RetainerPlace, IReadOnlyDictionary{uint, int}}, long)"/>.
     /// </summary>
     public bool ShouldRead(ulong retainerId, bool ready, long nowMs)
     {
@@ -100,10 +132,9 @@ public sealed class RetainerVisitGate
     /// Offers what was just read. Returns whether it may be filed under <see cref="RetainerId"/>: before confirmation only when it
     /// matches the previous read exactly, afterwards always.
     /// </summary>
-    public bool Offer(IReadOnlyDictionary<uint, int> stored, IReadOnlyDictionary<uint, int> market, long nowMs)
+    public bool Offer(IReadOnlyDictionary<RetainerPlace, IReadOnlyDictionary<uint, int>> places, long nowMs)
     {
-        ArgumentNullException.ThrowIfNull(stored);
-        ArgumentNullException.ThrowIfNull(market);
+        ArgumentNullException.ThrowIfNull(places);
         if (RetainerId == 0)
             return false;
         if (Confirmed)
@@ -111,24 +142,20 @@ public sealed class RetainerVisitGate
             _nextReadMs = nowMs + RecheckMs;
             return true;
         }
-        var stable = _lastStored is not null && _lastMarket is not null
-            && OwnedCounting.SameCounts(_lastStored, stored) && OwnedCounting.SameCounts(_lastMarket, market);
-        if (stable)
+        if (_lastPlaces is not null && OwnedCounting.SamePlaces(_lastPlaces, places))
         {
             Confirmed = true;
             ForgetSample();
             _nextReadMs = nowMs + RecheckMs;
             return true;
         }
-        _lastStored = stored;
-        _lastMarket = market;
+        _lastPlaces = places;
         _nextReadMs = nowMs + StableIntervalMs;
         return false;
     }
 
     private void ForgetSample()
     {
-        _lastStored = null;
-        _lastMarket = null;
+        _lastPlaces = null;
     }
 }

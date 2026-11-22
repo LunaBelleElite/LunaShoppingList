@@ -6,7 +6,7 @@ using LunaShoppingList.Core;
 namespace LunaShoppingList.Adapters;
 
 /// <summary>Reads item names and categories from the game's Item sheet.</summary>
-public sealed class LuminaItemInfo : IItemInfo
+public sealed class LuminaItemInfo : IItemInfo, IItemCatalog
 {
     /// <summary>
     /// Row id of the ItemUICategory named "Crystal" (shards, crystals, clusters).
@@ -19,7 +19,8 @@ public sealed class LuminaItemInfo : IItemInfo
     private readonly IPluginLog log;
 
     // PublicationOnly: a failed build is not cached, so a later access tries again.
-    private readonly Lazy<Dictionary<string, uint>> byName;
+    private readonly Lazy<Index> index;
+    private static readonly IReadOnlyList<ItemSearchEntry> NoEntries = Array.Empty<ItemSearchEntry>();
     private readonly object warmUpGate = new();
     private Task? warmUp;
     private long warmUpStartedAt;
@@ -29,7 +30,7 @@ public sealed class LuminaItemInfo : IItemInfo
         items = data.GetExcelSheet<Item>();
         recipes = data.GetExcelSheet<Recipe>();
         this.log = log;
-        byName = new Lazy<Dictionary<string, uint>>(BuildIndex, LazyThreadSafetyMode.PublicationOnly);
+        index = new Lazy<Index>(BuildIndex, LazyThreadSafetyMode.PublicationOnly);
     }
 
     /// <summary>
@@ -40,19 +41,25 @@ public sealed class LuminaItemInfo : IItemInfo
     {
         get
         {
-            if (byName.IsValueCreated)
+            if (index.IsValueCreated)
                 return true;
             WarmUp();
             return false;
         }
     }
 
+    /// <summary>True once <see cref="MarketableItems"/> is filled; while it is not, this starts the same background build as <see cref="IsNameIndexReady"/>.</summary>
+    public bool IsReady => IsNameIndexReady;
+
+    /// <summary>Market-board items, one per distinct name, sorted by name then id. Empty until <see cref="IsReady"/>; never blocks.</summary>
+    public IReadOnlyList<ItemSearchEntry> MarketableItems => index.IsValueCreated ? index.Value.Marketable : NoEntries;
+
     /// <summary>Builds the name index on the thread pool unless it is built, being built, or failed only moments ago.</summary>
     internal void WarmUp()
     {
         lock (warmUpGate)
         {
-            if (byName.IsValueCreated || warmUp is { IsCompleted: false })
+            if (index.IsValueCreated || warmUp is { IsCompleted: false })
                 return;
             if (warmUp != null && Environment.TickCount64 - warmUpStartedAt < 10_000)
                 return;
@@ -61,7 +68,7 @@ public sealed class LuminaItemInfo : IItemInfo
             {
                 try
                 {
-                    _ = byName.Value;
+                    _ = index.Value;
                 }
                 catch (Exception ex)
                 {
@@ -89,7 +96,7 @@ public sealed class LuminaItemInfo : IItemInfo
     {
         if (string.IsNullOrWhiteSpace(name))
             return null;
-        return byName.Value.TryGetValue(name.Trim(), out var id) ? id : null;
+        return index.Value.ByName.TryGetValue(name.Trim(), out var id) ? id : null;
     }
 
     /// <summary>Raw UI category row id and name for an item (used by the diagnostic dump), or null if unknown.</summary>
@@ -100,7 +107,9 @@ public sealed class LuminaItemInfo : IItemInfo
         return (row.ItemUICategory.RowId, row.ItemUICategory.ValueNullable?.Name.ToString() ?? "?");
     }
 
-    private Dictionary<string, uint> BuildIndex()
+    private sealed record Index(Dictionary<string, uint> ByName, IReadOnlyList<ItemSearchEntry> Marketable);
+
+    private Index BuildIndex()
     {
         var withRecipe = new HashSet<uint>();
         foreach (var r in recipes)
@@ -108,6 +117,7 @@ public sealed class LuminaItemInfo : IItemInfo
                 withRecipe.Add(r.ItemResult.RowId);
 
         var map = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
+        var market = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
         foreach (var row in items)
         {
             var name = row.Name.ToString();
@@ -116,7 +126,17 @@ public sealed class LuminaItemInfo : IItemInfo
             // First row wins, except a row that has a recipe replaces one that does not.
             if (!map.TryGetValue(name, out var existing) || (!withRecipe.Contains(existing) && withRecipe.Contains(row.RowId)))
                 map[name] = row.RowId;
+            if (row.ItemSearchCategory.RowId > 0 && !row.IsUntradable
+                && (!market.TryGetValue(name, out var marketExisting) || (!withRecipe.Contains(marketExisting) && withRecipe.Contains(row.RowId))))
+                market[name] = row.RowId;
         }
-        return map;
+
+        var list = market.Select(kv => new ItemSearchEntry(kv.Value, kv.Key)).ToList();
+        list.Sort((a, b) =>
+        {
+            var c = string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+            return c != 0 ? c : a.ItemId.CompareTo(b.ItemId);
+        });
+        return new Index(map, list.AsReadOnly());
     }
 }

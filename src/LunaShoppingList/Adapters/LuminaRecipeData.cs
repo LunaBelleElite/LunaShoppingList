@@ -6,11 +6,38 @@ using LunaShoppingList.Core;
 namespace LunaShoppingList.Adapters;
 
 /// <summary>Reads recipes from the game's Recipe sheet.</summary>
-public sealed class LuminaRecipeData : IRecipeData
+public sealed class LuminaRecipeData : IRecipeData, IRecipeLookup
 {
     private readonly ExcelSheet<Recipe> sheet;
+    private readonly Lazy<Dictionary<uint, uint>> recipeByResult;
 
-    public LuminaRecipeData(IDataManager data) => sheet = data.GetExcelSheet<Recipe>();
+    public LuminaRecipeData(IDataManager data)
+    {
+        sheet = data.GetExcelSheet<Recipe>();
+        recipeByResult = new Lazy<Dictionary<uint, uint>>(BuildResultIndex, LazyThreadSafetyMode.PublicationOnly);
+    }
+
+    /// <summary>True once the item-to-recipe index exists, so <see cref="FindRecipeForItem"/> is a dictionary lookup.</summary>
+    internal bool IsResultIndexReady => recipeByResult.IsValueCreated;
+
+    /// <summary>
+    /// Builds an item-to-recipe index on first use (one pass over the sheet), so call it on a click, never per frame.
+    /// A build that failed is not remembered: the next call tries again.
+    /// </summary>
+    public RecipeInfo? FindRecipeForItem(uint itemId)
+        => recipeByResult.Value.TryGetValue(itemId, out var recipeId) ? GetRecipe(recipeId) : null;
+
+    private Dictionary<uint, uint> BuildResultIndex()
+    {
+        var map = new Dictionary<uint, uint>();
+        foreach (var row in sheet)
+        {
+            var result = row.ItemResult.RowId;
+            if (result != 0 && (!map.TryGetValue(result, out var existing) || row.RowId < existing))
+                map[result] = row.RowId;
+        }
+        return map;
+    }
 
     public RecipeInfo? GetRecipe(uint recipeId)
     {

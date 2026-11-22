@@ -3,28 +3,23 @@
 **Turn an Artisan crafting list into a shopping list that tells you which world to buy each thing on.**
 
 Luna Shopping List is a Dalamud plugin for Final Fantasy XIV. Open one of your
-Artisan crafting lists, press Build, and it asks Universalis what everything
-costs right now. You get each item once, with the worlds selling it, and you
-decide where to buy what. If you'd rather not decide, it will suggest a plan,
-and the route and totals keep up as you change quantities. The ingredient list
-also shows how many of each item you already hold.
+Artisan crafting lists, or a list you made in the plugin, press Build, and it
+asks Universalis what everything costs right now. You get each item once, with
+the worlds selling it, and you decide where to buy what. If you'd rather not
+decide, it will suggest a plan, and the route and totals keep up as you change
+quantities. The ingredient list also shows how many of each item you already
+hold.
 
 It doesn't travel for you and it doesn't buy anything. It tells you where to
 go. The walking is yours.
 
-## It's an early preview
-
-So far it has been tested on the global client, with Artisan, on one machine.
-Some things further down are marked untested. The two newest pieces, the Plan
-options panel and the owned-item counts, are built and unit-tested, but I
-haven't tried them in the game yet, so they're the likeliest to trip you up. If
-anything does, open an issue on this repository and say what you did.
+I use it for my own crafting in the game, and I fix bugs as I run into them. If
+you hit one, open an issue on this repository and say what you did.
 
 ## Add the repository in the game
 
 Dalamud installs plugins from repositories, and this one lives in its own, so
-you add it once. The install route is new, so it may not go smoothly for
-everyone yet.
+you add it once.
 
 1. Type `/xlsettings` and open the **Experimental** tab.
 2. Under **Custom Plugin Repositories**, paste this address:
@@ -38,12 +33,17 @@ people you trust.
 
 ## From a list to a route
 
-1. Type `/lsl`. A list browser opens with a **My Lists** tab, which is your
-   Artisan lists plus a filter box, and a **Paste** tab.
+1. Type `/lsl`. A list browser opens with three tabs: **Artisan crafting
+   lists**, which is your Artisan lists plus a filter box, **My shopping
+   lists** for lists you put together yourself, and **Paste**.
 2. Click a list and it gets its own window with its ingredients. Open as many
    as you like at once. If a column is too narrow, drag its border. The
    **On you** and **Retainers** columns show how many of each item you already
-   hold.
+   hold. Hover a Retainers number to see which retainer has it, and whether
+   it's in their inventory, their crystals or up on the market board. The
+   **Vendor** column shows when an NPC also sells the item, for gil or for
+   something like Bicolor Gemstones, tomestones or scrips. Hover it for the
+   vendor's name and where they stand.
 3. Choose where you're willing to shop. The cross-world choice has been tried
    from a North American world, and worlds from several North American data
    centers showed up.
@@ -55,7 +55,14 @@ people you trust.
    visits the fewest worlds within that budget and lists every option with its
    extra cost, so you can click a different one. Slide it to zero for the
    cheapest plan. Type a quantity in yourself and the totals follow, and the
-   header then says the plan was edited by hand.
+   header then says the plan was edited by hand. Click an item's name in the
+   route list and it's copied, so you can paste it wherever you need it.
+
+To make your own list, name it on **My shopping lists**, type an item, pick it
+from the suggestions, set how many and press Add. Only items that sell on the
+market board are offered. Lists are saved for renaming, editing or deleting
+later, a craftable item can be swapped for its ingredients, and from step 2 on
+it works like an Artisan list.
 
 ## What it won't do
 
@@ -70,6 +77,11 @@ what each held the last time you opened it, per character, and shows a dim
 figure and a note asking you to open each retainer once. A `-` means it doesn't
 know yet. Equipped and armoury items aren't counted.
 
+It doesn't know whether you can actually buy from a vendor in the Vendor
+column. Some need a quest, a rank or an unlock first, and it doesn't check any
+of that. A few vendors can't be matched to an NPC, so those don't show up at
+all. Build still prices everything from the market board either way.
+
 It can't promise the cheapest plan. Its plans come from a fast search, and
 they're good, but nobody has proven them optimal.
 
@@ -79,23 +91,17 @@ quality, normal or high, and doesn't show which one a listing is.
 It only supports the global client. The China and Korea clients use different
 data, and it hasn't been built or tried for them.
 
-## Not seen working in the game yet
+## A few corners I haven't checked closely
 
-These are in the plugin, but nobody has watched them work in the game, so treat
-them as uncertain:
+I haven't compared the worlds the cross data center choice lists with what the
+game actually lets you visit. Getting to another region needs the
+game's own Data Center Travel, which the plugin doesn't do for you.
 
-- The Plan options panel and its slider, including how it looks and reads.
-- The **On you** and **Retainers** counts: bags, crystals, saddlebag, what it
-  remembers from retainers, and the optional AllaganTools counts. If you have
-  AllaganTools, it compares that plugin's retainer figure with its own record
-  and shows the larger one. It never adds the two together.
-- Pasting Artisan's plain-text export instead of picking a list.
-- The cross data center choice, and whether the worlds it lists match what the
-  game actually lets you visit. Getting to another region needs the game's own
-  Data Center Travel, which the plugin doesn't do for you.
-- Skipping items, the stale-listing marker, the short-by and over-by
-  indications, and Reload list.
-- Esc and gamepad behaviour when closing windows, and updating the plugin.
+I haven't tried pasting Artisan's plain-text export myself, so picking a list
+is the better-trodden way in. The same goes for skipping items, the
+stale-listing marker, the short-by and over-by notes, Reload list, closing
+windows with Esc or a gamepad, and updating the plugin. If any of those
+misbehaves, I'd like to hear about it.
 
 ## Why the numbers can be a little off
 

@@ -582,7 +582,12 @@ public sealed class ResultsWindow : Window
                 {
                     ImGui.TableNextRow();
                     ImGui.TableNextColumn();
-                    ImGui.TextUnformatted(Name(l.ItemId));
+                    var itemName = Name(l.ItemId);
+                    // Clicking the name copies it, so it can be pasted into the market board search.
+                    if (ImGui.Selectable($"{itemName}##copy{w.WorldId}_{l.ItemId}"))
+                        ImGui.SetClipboardText(itemName);
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Click to copy the item name");
                     ImGui.TableNextColumn();
                     ImGui.TextUnformatted(l.Quantity.ToString("N0"));
                     ImGui.TableNextColumn();

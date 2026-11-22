@@ -1,3 +1,4 @@
+using System.Runtime.Serialization;
 using Dalamud.Configuration;
 using LunaShoppingList.Core;
 
@@ -15,6 +16,29 @@ public sealed class Configuration : IPluginConfiguration
 
     /// <summary>Last chosen Artisan list id, or null if none.</summary>
     public int? LastListId { get; set; }
+
+    /// <summary>
+    /// Shopping lists the player made. A settings file without the member, or with null, loads as an empty list;
+    /// missing entries are dropped and blank or repeated ids replaced (see <see cref="CustomListOps.Normalize"/>).
+    /// </summary>
+    public List<CustomList> CustomLists
+    {
+        get => customLists;
+        set
+        {
+            customLists = value ?? new();
+            CustomListOps.Normalize(customLists);
+        }
+    }
+
+    private List<CustomList> customLists = new();
+
+    /// <summary>The saved custom list with this id, or null if there is none.</summary>
+    public CustomList? FindCustomList(string id) => CustomLists.FirstOrDefault(l => l?.Id == id);
+
+    // The settings reader may fill the existing list in place without calling the setter, so repair after loading too.
+    [OnDeserialized]
+    internal void OnDeserialized(StreamingContext context) => CustomListOps.Normalize(customLists);
 
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0.0 - 2026-11-22
+
+This covers everything since 0.5.0.0.
+
+- New My shopping lists tab, for lists you put together yourself. Name the list first, then type an item, pick it from the suggestions, set how many and press Add. Only items that sell on the market board are offered. Lists are saved, and you can rename, edit or delete them. Open one and it prices like an Artisan list, and a craftable item on it can be swapped for its ingredients.
+- The first tab is now called Artisan crafting lists. It used to be My Lists.
+- A new Vendor column shows when an NPC also sells an ingredient, for gil or for currencies such as Bicolor Gemstones, tomestones, scrips or Grand Company seals. Hover it for the vendor and where they are. It's there to read: it doesn't check whether a vendor is unlocked or available to you, and a few vendors can't be matched to an NPC, so those aren't shown.
+- Hover a Retainers number to see which retainer holds the item, and whether it's in their inventory, their crystals or their market listings.
+- Click an item's name in the route list to copy it.
+
 ## 0.5.0.0 - 2026-11-22
 
 Still an early preview. I haven't tried the Plan options panel or the owned-item counts in the game yet. They're built and unit-tested and nothing more, so they may well misbehave.

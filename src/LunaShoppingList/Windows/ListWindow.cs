@@ -12,18 +12,21 @@ public sealed class ListWindow : Window, IDisposable
 {
     private const string UnreadableConfigText = "Couldn't read Artisan's config, try again in a moment.";
     private const string NotStoredText = "This list is not stored in Artisan's config (premade/relic lists cannot be read). Use Paste ingredients instead.";
+    private const string CustomListGoneText = "This shopping list no longer exists.";
     private const string FootnoteText = "Prices are from Universalis, exclude market tax, and may be out of date. This plugin does not travel for you.";
     private const string OpenedText = "Shopping list opened in its own window.";
     private const string NoRetainerDataText = "Open each retainer once to count what they hold.";
+    private const string ListChangedCancelledText = "The list changed, so the running build was cancelled.";
 
     private static readonly Vector4 WarningColor = new(1f, 0.6f, 0.3f, 1f);
     private static readonly Vector4 ErrorColor = new(1f, 0.4f, 0.4f, 1f);
     private static readonly Vector4 EnoughColor = new(0.45f, 0.85f, 0.45f, 1f);
 
     private readonly string key;
-    private readonly string title;
+    private string title;
     private readonly int? artisanListId;
     private readonly IReadOnlyList<Requirement>? pastedRequirements;
+    private readonly string? customListId;
     private readonly Configuration config;
     private readonly ShoppingSession session;
     private readonly IArtisanListSource artisan;
@@ -31,6 +34,7 @@ public sealed class ListWindow : Window, IDisposable
     private readonly IWorldData worlds;
     private readonly ShoppingListService service;
     private readonly OwnedItemsService owned;
+    private readonly IItemSources sources;
     private readonly IWindowHost host;
     private readonly IPluginLog log;
 
@@ -38,6 +42,9 @@ public sealed class ListWindow : Window, IDisposable
     private string sourceMessage = string.Empty;
     private List<Requirement> rows = [];
     private readonly Dictionary<uint, string> names = new();
+
+    // Vendor column text per item, kept once the vendor index is ready so the rows are not rebuilt every frame.
+    private readonly Dictionary<uint, string> vendorText = new();
 
     // Shared with the background build task. Writes happen under buildGate; a build publishes its
     // result only while its generation is still current, so a superseded build can never show it.
@@ -56,8 +63,9 @@ public sealed class ListWindow : Window, IDisposable
     private readonly List<(CancellationTokenSource Source, Task Task)> retired = [];
 
     /// <summary>
-    /// Creates the window. Exactly one of <paramref name="artisanListId"/> and <paramref name="pastedRequirements"/> is set:
-    /// an Artisan list is loaded through <paramref name="artisan"/> and its saved exclusions applied; pasted requirements are
+    /// Creates the window. Exactly one of <paramref name="artisanListId"/>, <paramref name="pastedRequirements"/> and <paramref name="customListId"/> is set:
+    /// an Artisan list is loaded through <paramref name="artisan"/> and its saved exclusions applied; a custom list is read from
+    /// the saved settings and its exclusions are written back to them; pasted requirements are
     /// used as given and their choices are not remembered. <paramref name="key"/> is stable and unique per list and is used for the window id.
     /// </summary>
     internal ListWindow(
@@ -65,6 +73,7 @@ public sealed class ListWindow : Window, IDisposable
         string title,
         int? artisanListId,
         IReadOnlyList<Requirement>? pastedRequirements,
+        string? customListId,
         Configuration config,
         ShoppingSession session,
         IArtisanListSource artisan,
@@ -72,17 +81,19 @@ public sealed class ListWindow : Window, IDisposable
         IWorldData worlds,
         ShoppingListService service,
         OwnedItemsService owned,
+        IItemSources sources,
         IWindowHost host,
         IPluginLog log)
         : base(title + "###lsl-list-" + key)
     {
-        if (artisanListId.HasValue == (pastedRequirements != null))
-            throw new ArgumentException("Exactly one of artisanListId and pastedRequirements must be set.");
+        if ((artisanListId.HasValue ? 1 : 0) + (pastedRequirements != null ? 1 : 0) + (customListId != null ? 1 : 0) != 1)
+            throw new ArgumentException("Exactly one of artisanListId, pastedRequirements and customListId must be set.");
 
         this.key = key;
         this.title = title;
         this.artisanListId = artisanListId;
         this.pastedRequirements = pastedRequirements;
+        this.customListId = customListId;
         this.config = config;
         this.session = session;
         this.artisan = artisan;
@@ -90,6 +101,7 @@ public sealed class ListWindow : Window, IDisposable
         this.worlds = worlds;
         this.service = service;
         this.owned = owned;
+        this.sources = sources;
         this.host = host;
         this.log = log;
         Size = new Vector2(520, 560);
@@ -148,7 +160,7 @@ public sealed class ListWindow : Window, IDisposable
 
         // Escape closes an Artisan list window only when nothing would be lost: its choices are saved and
         // reopening reloads them. It never closes a window with a build running or a pasted list's choices.
-        RespectCloseHotkey = artisanListId.HasValue && !building;
+        RespectCloseHotkey = (artisanListId.HasValue || customListId != null) && !building;
     }
 
     /// <inheritdoc />
@@ -184,6 +196,25 @@ public sealed class ListWindow : Window, IDisposable
                     session.LoadFromList(list, config.ExcludedItemsByList.TryGetValue(id, out var saved) ? saved : []);
                 }
             }
+            else if (customListId != null)
+            {
+                var saved = config.FindCustomList(customListId);
+                if (saved == null)
+                {
+                    session.LoadFromPaste(new PasteResult([], []));
+                    sourceMessage = CustomListGoneText;
+                }
+                else
+                {
+                    if (saved.Name != title)
+                    {
+                        title = saved.Name;
+                        WindowName = title + "###lsl-list-" + key;
+                    }
+                    session.LoadFromPaste(new PasteResult(CustomListOps.ToRequirements(saved), []));
+                    session.ImportExclusions(saved.ExcludedItemIds);
+                }
+            }
             else
             {
                 session.LoadFromPaste(new PasteResult(pastedRequirements!, []));
@@ -202,11 +233,36 @@ public sealed class ListWindow : Window, IDisposable
         RefreshRows();
     }
 
+    /// <summary>
+    /// Reads the saved custom list again (name, items and exclusions); a running build is cancelled and its outcome
+    /// discarded, and the window says so.
+    /// </summary>
+    internal void ReloadCustomList()
+    {
+        var wasBuilding = building;
+        LoadList();
+        if (wasBuilding)
+        {
+            lock (buildGate)
+                progressText = ListChangedCancelledText;
+        }
+    }
+
+    /// <summary>Takes the saved custom list's new name for the title only; rows and a running build are left alone.</summary>
+    internal void RenameCustomList()
+    {
+        if (customListId == null || config.FindCustomList(customListId) is not { } saved || saved.Name == title)
+            return;
+        title = saved.Name;
+        WindowName = title + "###lsl-list-" + key;
+    }
+
     private void RefreshRows()
     {
         // Crystals, shards and clusters sort to the end; this is purely presentation.
         rows = session.Requirements.OrderBy(r => items.IsCrystalLike(r.ItemId)).ThenBy(r => r.ItemId).ToList();
         names.Clear();
+        vendorText.Clear();
         CancelBuild();
         RetireCurrent();
         lock (buildGate)
@@ -232,8 +288,8 @@ public sealed class ListWindow : Window, IDisposable
     private void DrawHeader()
     {
         ImGui.TextUnformatted(title);
-        ImGui.TextDisabled(artisanListId.HasValue ? "Source: Artisan list" : "Source: pasted ingredients");
-        if (artisanListId.HasValue)
+        ImGui.TextDisabled(artisanListId.HasValue ? "Source: Artisan list" : customListId != null ? "Source: My shopping list" : "Source: pasted ingredients");
+        if (artisanListId.HasValue || customListId != null)
         {
             // Reads the list and its saved choices again; a running build is cancelled and its outcome discarded.
             ImGui.SameLine();
@@ -289,7 +345,7 @@ public sealed class ListWindow : Window, IDisposable
         var reserved = ImGui.GetFrameHeightWithSpacing() + rowHeight * (showRetainerNote ? 6 : 5) + ImGui.GetStyle().ItemSpacing.Y * 4;
         var free = ImGui.GetContentRegionAvail().Y - reserved;
         var tableHeight = Math.Max(rowHeight * 7, free);
-        if (ImGui.BeginTable("##ingredients", 5, ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersInnerV, new Vector2(-1, tableHeight)))
+        if (ImGui.BeginTable("##ingredients", 6, ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersInnerV, new Vector2(-1, tableHeight)))
         {
             try
             {
@@ -303,6 +359,7 @@ public sealed class ListWindow : Window, IDisposable
                 ImGui.TableSetupColumn("Quantity", ImGuiTableColumnFlags.WidthFixed, CountColumnWidth("Quantity", padding));
                 ImGui.TableSetupColumn("On you", ImGuiTableColumnFlags.WidthFixed, CountColumnWidth("On you", padding));
                 ImGui.TableSetupColumn("Retainers", ImGuiTableColumnFlags.WidthFixed, CountColumnWidth("Retainers", padding));
+                ImGui.TableSetupColumn("Vendor", ImGuiTableColumnFlags.WidthFixed, VendorColumnWidth(padding));
                 ImGui.TableHeadersRow();
                 foreach (var r in rows)
                 {
@@ -324,7 +381,9 @@ public sealed class ListWindow : Window, IDisposable
                     ImGui.TableNextColumn();
                     DrawOnYou(summary, r.Quantity);
                     ImGui.TableNextColumn();
-                    DrawRetainers(summary, r.Quantity);
+                    DrawRetainers(summary, r.ItemId, r.Quantity);
+                    ImGui.TableNextColumn();
+                    DrawVendor(r.ItemId);
                 }
             }
             finally
@@ -339,6 +398,10 @@ public sealed class ListWindow : Window, IDisposable
     /// <summary>A count column wide enough for its header and for a six-digit count, at the current font size.</summary>
     private static float CountColumnWidth(string header, float padding)
         => Math.Max(ImGui.CalcTextSize(header).X, ImGui.CalcTextSize("999,999").X) + padding;
+
+    /// <summary>A vendor column wide enough for its header and for a typical cost such as "1,200 gil +2", and mostly for "120 Bicolor Gemstone".</summary>
+    private static float VendorColumnWidth(float padding)
+        => Math.Max(ImGui.CalcTextSize("Vendor").X, Math.Max(ImGui.CalcTextSize("1,200 gil +2").X, ImGui.CalcTextSize("120 Bicolor Gemstone").X * 0.9f)) + padding;
 
     /// <summary>Bags, crystals and saddlebag; <c>null</c> until the bags have been read for this character.</summary>
     private static long? OnYouTotal(OwnedSummary s) => s.OnYou is int now ? (long)now + (s.Saddlebag ?? 0) : null;
@@ -372,15 +435,15 @@ public sealed class ListWindow : Window, IDisposable
         }
     }
 
-    private static void DrawRetainers(OwnedSummary s, int needed)
+    private void DrawRetainers(OwnedSummary cell, uint itemId, int needed)
     {
-        if (s.Retainers is long retainers)
+        if (cell.Retainers is long retainers)
         {
             var text = retainers.ToString("N0");
             // Until the bags are read only the retainers themselves count towards "enough".
-            if (needed > 0 && (OnYouTotal(s) ?? 0) + retainers >= needed)
+            if (needed > 0 && (OnYouTotal(cell) ?? 0) + retainers >= needed)
                 ImGui.TextColored(EnoughColor, text);
-            else if (s.RetainerSource == RetainerSource.Cache)
+            else if (cell.RetainerSource == RetainerSource.Cache)
                 // This plugin's own record is only as current as the last visit to each retainer.
                 ImGui.TextDisabled(text);
             else
@@ -392,6 +455,8 @@ public sealed class ListWindow : Window, IDisposable
         }
         if (!ImGui.IsItemHovered()) return;
 
+        // The tooltip reads one snapshot, so the totals and the list of retainers below them always agree.
+        var (s, where) = owned.SummarizeWithLocations(itemId);
         ImGui.BeginTooltip();
         try
         {
@@ -412,6 +477,7 @@ public sealed class ListWindow : Window, IDisposable
             ImGui.TextDisabled("Counts retainer inventory, crystals and market listings.");
             if (s.Retainers is long r && OnYouTotal(s) is long onYou)
                 ImGui.TextUnformatted($"With what is on you: {onYou + r:N0} of {needed:N0} needed");
+            DrawRetainerLocations(s, where);
         }
         finally
         {
@@ -419,14 +485,108 @@ public sealed class ListWindow : Window, IDisposable
         }
     }
 
+    private void DrawVendor(uint itemId)
+    {
+        if (!vendorText.TryGetValue(itemId, out var text))
+        {
+            text = ItemSourceSummary.ColumnText(sources, itemId);
+            if (sources.IsReady)
+                vendorText[itemId] = text;
+        }
+        var hasSources = text != ItemSourceSummary.NoneText && text != ItemSourceSummary.NotReadyText;
+        if (hasSources)
+        {
+            // The normal text colour, softened, so real sources read as calm secondary information in light and dark themes.
+            var calm = ImGui.GetStyle().Colors[(int)ImGuiCol.Text];
+            calm.W *= 0.85f;
+            ImGui.TextColored(calm, text);
+        }
+        else
+        {
+            ImGui.TextDisabled(text);
+        }
+        if (!ImGui.IsItemHovered()) return;
+
+        if (!sources.IsReady)
+        {
+            ImGui.BeginTooltip();
+            try
+            {
+                ImGui.TextUnformatted(sources.HasFailed
+                    ? "The vendor index could not be built. Details are in /xllog."
+                    : "Vendor index is still loading.");
+            }
+            finally
+            {
+                ImGui.EndTooltip();
+            }
+            return;
+        }
+        if (!hasSources) return;
+
+        var (shown, more) = ItemSourceSummary.Capped(ItemSourceSummary.Ordered(sources.For(itemId)), ItemSourceSummary.DefaultTooltipLines);
+        ImGui.BeginTooltip();
+        try
+        {
+            ImGui.TextUnformatted($"{Name(itemId)} can also be had from vendors");
+            foreach (var s in shown)
+                ImGui.TextUnformatted(ItemSourceSummary.Line(s));
+            if (more > 0)
+                ImGui.TextDisabled(ItemSourceSummary.MoreText(more));
+            ImGui.TextDisabled("Availability and quest unlocks are not checked.");
+        }
+        finally
+        {
+            ImGui.EndTooltip();
+        }
+    }
+
+    private const int MaxLocationLines = 8;
+
+    /// <summary>The "Where" part of the retainers tooltip. Runs only while the tooltip is open.</summary>
+    private static void DrawRetainerLocations(OwnedSummary s, IReadOnlyList<RetainerLocation> where)
+    {
+        if (where.Count == 0)
+            return;
+
+        ImGui.Separator();
+        if (s.RetainerSource == RetainerSource.External)
+            ImGui.TextDisabled("AllaganTools does not say where an item is; the list below is this plugin's own record.");
+        ImGui.TextUnformatted("Where");
+        foreach (var loc in where.Take(MaxLocationLines))
+        {
+            var name = string.IsNullOrEmpty(loc.Name) ? "(unnamed retainer)" : loc.Name;
+            if (loc.LocationRecorded)
+            {
+                var parts = string.Join(", ", RetainerPlaceDisplay.Merge(loc.Places).Select(p => $"{p.Label} x{p.Count:N0}"));
+                ImGui.TextUnformatted($"{name}: {parts} (as of {LocalTime(loc.CapturedUtc)})");
+            }
+            else
+            {
+                ImGui.TextUnformatted($"{name}: {loc.Total:N0}");
+                ImGui.SameLine();
+                ImGui.TextDisabled($"location not recorded yet, open this retainer once (as of {LocalTime(loc.CapturedUtc)})");
+            }
+        }
+        if (where.Count > MaxLocationLines)
+            ImGui.TextDisabled($"+{where.Count - MaxLocationLines} more");
+    }
+
     private static string LocalTime(DateTimeOffset? utc) => utc is { } t ? t.ToLocalTime().ToString("g") : "unknown";
 
     private void PersistExclusions()
     {
-        // Only Artisan lists are remembered; pasted text has no stable id.
-        if (artisanListId is not int id) return;
-        config.ExcludedItemsByList[id] = new HashSet<uint>(session.ExportExclusions());
-        config.Save();
+        // Artisan and custom lists are remembered; pasted text has no stable id.
+        if (artisanListId is int id)
+        {
+            config.ExcludedItemsByList[id] = new HashSet<uint>(session.ExportExclusions());
+            config.Save();
+        }
+        else if (customListId != null && config.FindCustomList(customListId) is { } saved)
+        {
+            saved.ExcludedItemIds = new HashSet<uint>(session.ExportExclusions());
+            config.Save();
+        }
     }
 
     // ---- Build ----

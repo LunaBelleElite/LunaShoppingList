@@ -11,6 +11,8 @@ namespace LunaShoppingList.Windows;
 /// </summary>
 internal sealed class WindowManager : IWindowHost, IDisposable
 {
+    private const string ResultsTitleSuffix = " - shopping list";
+
     private readonly Configuration config;
     private readonly IArtisanListSource artisan;
     private readonly IItemInfo items;
@@ -18,6 +20,7 @@ internal sealed class WindowManager : IWindowHost, IDisposable
     private readonly ShoppingListService service;
     private readonly MaterialsCalculator calc;
     private readonly OwnedItemsService owned;
+    private readonly IItemSources sources;
     private readonly IPluginLog log;
 
     private readonly Dictionary<string, ListWindow> listWindows = new();
@@ -30,7 +33,7 @@ internal sealed class WindowManager : IWindowHost, IDisposable
     private int pasteCounter;
 
     public WindowManager(WindowSystem windowSystem, Configuration config, IArtisanListSource artisan, IItemInfo items,
-        IWorldData worlds, ShoppingListService service, MaterialsCalculator calc, OwnedItemsService owned, IPluginLog log)
+        IWorldData worlds, ShoppingListService service, MaterialsCalculator calc, OwnedItemsService owned, IItemSources sources, IPluginLog log)
     {
         WindowSystem = windowSystem;
         this.config = config;
@@ -40,6 +43,7 @@ internal sealed class WindowManager : IWindowHost, IDisposable
         this.service = service;
         this.calc = calc;
         this.owned = owned;
+        this.sources = sources;
         this.log = log;
     }
 
@@ -55,20 +59,65 @@ internal sealed class WindowManager : IWindowHost, IDisposable
             existing.BringToFront();
             return;
         }
-        AddList(key, name, id, null);
+        AddList(key, name, id, null, null);
     }
+
+    /// <summary>Opens the window for a saved custom list, or brings it to the front if it is already open.</summary>
+    public void OpenCustomList(string id)
+    {
+        var list = config.FindCustomList(id);
+        if (list == null) return;
+        var key = CustomKey(id);
+        if (listWindows.TryGetValue(key, out var existing))
+        {
+            existing.IsOpen = true;
+            existing.BringToFront();
+            return;
+        }
+        AddList(key, list.Name, null, null, id);
+    }
+
+    /// <summary>Closes the list window and the results window of a custom list; a running build is cancelled. Safe if neither is open.</summary>
+    public void CloseCustomList(string id)
+    {
+        var key = CustomKey(id);
+        CloseList(key);
+        OnResultsClosed(key);
+    }
+
+    /// <summary>Makes an open window for a custom list read the saved list again. Safe if the window is not open.</summary>
+    public void RefreshCustomList(string id)
+    {
+        if (listWindows.TryGetValue(CustomKey(id), out var window))
+            window.ReloadCustomList();
+    }
+
+    /// <summary>
+    /// Gives an open list window and results window of a custom list the list's saved name. Only the titles change:
+    /// rows and a running build are left alone. Safe if neither is open.
+    /// </summary>
+    public void RenameCustomList(string id)
+    {
+        var key = CustomKey(id);
+        if (listWindows.TryGetValue(key, out var window))
+            window.RenameCustomList();
+        if (resultsWindows.TryGetValue(key, out var results) && config.FindCustomList(id) is { } list)
+            results.WindowName = list.Name + ResultsTitleSuffix + "###lsl-results-" + key;
+    }
+
+    private static string CustomKey(string id) => "custom-" + id;
 
     /// <summary>Opens a window for pasted ingredients; each call makes a new window.</summary>
     public void OpenPasted(IReadOnlyList<Requirement> requirements)
     {
         var n = ++pasteCounter;
-        AddList("paste-" + n, $"Pasted ingredients ({n})", null, requirements);
+        AddList("paste-" + n, $"Pasted ingredients ({n})", null, requirements, null);
     }
 
-    private void AddList(string key, string title, int? artisanListId, IReadOnlyList<Requirement>? requirements)
+    private void AddList(string key, string title, int? artisanListId, IReadOnlyList<Requirement>? requirements, string? customListId)
     {
         var session = new ShoppingSession(calc, items);
-        var window = new ListWindow(key, title, artisanListId, requirements, config, session, artisan, items, worlds, service, owned, this, log);
+        var window = new ListWindow(key, title, artisanListId, requirements, customListId, config, session, artisan, items, worlds, service, owned, sources, this, log);
         listWindows[key] = window;
         window.IsOpen = true;
         pending.Enqueue(() => WindowSystem.AddWindow(window));
@@ -84,7 +133,7 @@ internal sealed class WindowManager : IWindowHost, IDisposable
             existing.BringToFront();
             return;
         }
-        var window = new ResultsWindow(key, title + " - shopping list", book, options, items, OnResultsClosed);
+        var window = new ResultsWindow(key, title + ResultsTitleSuffix, book, options, items, OnResultsClosed);
         resultsWindows[key] = window;
         window.IsOpen = true;
         pending.Enqueue(() => WindowSystem.AddWindow(window));

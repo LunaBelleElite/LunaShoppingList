@@ -19,18 +19,62 @@ public enum RetainerSource
 /// </summary>
 public sealed record SaddlebagSnapshot(DateTimeOffset CapturedUtc, IReadOnlyDictionary<uint, int> Items);
 
+/// <summary>The containers of a retainer that are counted separately.</summary>
+public enum RetainerPlace
+{
+    /// <summary>Retainer inventory page 1.</summary>
+    Bag1,
+    /// <summary>Retainer inventory page 2.</summary>
+    Bag2,
+    /// <summary>Retainer inventory page 3.</summary>
+    Bag3,
+    /// <summary>Retainer inventory page 4.</summary>
+    Bag4,
+    /// <summary>Retainer inventory page 5.</summary>
+    Bag5,
+    /// <summary>Retainer inventory page 6.</summary>
+    Bag6,
+    /// <summary>Retainer inventory page 7.</summary>
+    Bag7,
+    /// <summary>The retainer crystal container.</summary>
+    Crystals,
+
+    /// <summary>The retainer market board listings.</summary>
+    Market,
+}
+
 /// <summary>
 /// What one retainer held the last time it was open. Counts are per item id, already summed by the caller
 /// (high-quality and normal copies of an item are the caller's concern, not this type's).
-/// <paramref name="Stored"/> is the retainer's inventory, crystals and equipment-free storage;
-/// <paramref name="Market"/> is what it has listed on the market board.
+/// <paramref name="Stored"/> is the retainer's bags and crystals (equipment is not counted);
+/// <paramref name="Market"/> is what it has listed on the market board. <paramref name="Places"/> says which container held what;
+/// it is <c>null</c> for a record made before containers were told apart, whose counts are kept but have no known place.
+/// When <paramref name="Places"/> is present, <paramref name="Stored"/> and <paramref name="Market"/> are sums of it.
 /// </summary>
 public sealed record RetainerSnapshot(
     ulong Id,
     string Name,
     DateTimeOffset CapturedUtc,
     IReadOnlyDictionary<uint, int> Stored,
-    IReadOnlyDictionary<uint, int> Market);
+    IReadOnlyDictionary<uint, int> Market,
+    IReadOnlyDictionary<RetainerPlace, IReadOnlyDictionary<uint, int>>? Places = null)
+{
+    /// <summary>Whether the container of each item is known (false for a record made before containers were told apart).</summary>
+    public bool LocationRecorded => Places is not null;
+}
+
+/// <summary>
+/// Where one retainer holds an item. <paramref name="Places"/> maps each container that holds it to its count, in container
+/// order, and is empty when <paramref name="LocationRecorded"/> is false. <paramref name="Total"/> is bags, crystals and market
+/// listings together, so the totals over all retainers add up to <see cref="OwnedCache.RetainerTotal"/>.
+/// </summary>
+public sealed record RetainerLocation(
+    ulong RetainerId,
+    string Name,
+    DateTimeOffset CapturedUtc,
+    bool LocationRecorded,
+    IReadOnlyDictionary<RetainerPlace, int> Places,
+    long Total);
 
 /// <summary>
 /// How many of one item the player owns, by place. A <c>null</c> count means "unknown", never zero: show a dash,

@@ -30,6 +30,7 @@ public sealed class Plugin : IDalamudPlugin
     internal Configuration Configuration { get; }
     internal LuminaRecipeData RecipeData { get; }
     internal LuminaItemInfo ItemInfo { get; }
+    internal LuminaItemSources ItemSources { get; }
     internal DalamudWorldData WorldData { get; }
     internal ArtisanListSource ArtisanLists { get; }
     internal HttpClientGetter HttpGetter { get; }
@@ -44,6 +45,8 @@ public sealed class Plugin : IDalamudPlugin
         RecipeData = new LuminaRecipeData(DataManager);
         ItemInfo = new LuminaItemInfo(DataManager, Log);
         ItemInfo.WarmUp();
+        ItemSources = new LuminaItemSources(DataManager, Log);
+        ItemSources.WarmUp();
         WorldData = new DalamudWorldData(PlayerState, DataManager);
         ArtisanLists = new ArtisanListSource(PluginInterface, Log);
         HttpGetter = new HttpClientGetter();
@@ -53,8 +56,8 @@ public sealed class Plugin : IDalamudPlugin
         diagnosticDump = new DiagnosticDump(DataManager, PlayerState, Log, ChatGui, ArtisanLists, ItemInfo);
 
         Windows = new WindowManager(WindowSystem, Configuration, ArtisanLists, ItemInfo, WorldData, ShoppingService,
-            new MaterialsCalculator(RecipeData), OwnedItems, Log);
-        Browser = new ListBrowserWindow(Configuration, ArtisanLists, ItemInfo, Windows, Log);
+            new MaterialsCalculator(RecipeData), OwnedItems, ItemSources, Log);
+        Browser = new ListBrowserWindow(Configuration, ArtisanLists, ItemInfo, ItemInfo, RecipeData, Windows, Log);
         WindowSystem.AddWindow(Browser);
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
@@ -72,6 +75,8 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.Draw -= DrawUi;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleMainUi;
+        // Stops a vendor index build still running and silences its log.
+        ItemSources.Dispose();
         // Cancels every running build and waits briefly for it, so they are done with the HTTP client first.
         Windows.Dispose();
         WindowSystem.RemoveAllWindows();

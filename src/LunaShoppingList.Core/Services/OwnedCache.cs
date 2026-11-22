@@ -11,7 +11,12 @@ namespace LunaShoppingList.Core;
 /// </summary>
 public sealed class OwnedCache
 {
+    // The file stays Version 1 on purpose: a reader that only knows Version 1 skips the optional Places member and keeps every
+    // count, so a downgrade loses locations and nothing else. Version 2 files are still read.
     private const int CurrentVersion = 1;
+    private const int NewestReadableVersion = 2;
+
+    private static readonly Dictionary<string, RetainerPlace> PlaceNames = Enum.GetValues<RetainerPlace>().ToDictionary(p => p.ToString());
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
@@ -55,6 +60,30 @@ public sealed class OwnedCache
         ArgumentNullException.ThrowIfNull(stored);
         ArgumentNullException.ThrowIfNull(market);
         _retainers[id] = new RetainerSnapshot(id, name ?? "", capturedUtc.ToUniversalTime(), Positive(stored), Positive(market));
+    }
+
+    /// <summary>
+    /// Records what retainer <paramref name="id"/> held when it was opened, container by container, replacing its old snapshot completely.
+    /// </summary>
+    public void ReplaceRetainer(ulong id, string name, DateTimeOffset capturedUtc, IReadOnlyDictionary<RetainerPlace, IReadOnlyDictionary<uint, int>> places)
+    {
+        ArgumentNullException.ThrowIfNull(places);
+        var placed = new SortedDictionary<RetainerPlace, IReadOnlyDictionary<uint, int>>();
+        var stored = new Dictionary<uint, int>();
+        var market = new Dictionary<uint, int>();
+        foreach (var (place, counts) in places)
+        {
+            if (!Enum.IsDefined(place) || counts is null)
+                continue;
+            var positive = Positive(counts);
+            if (positive.Count == 0)
+                continue;
+            placed[place] = positive;
+            var sum = place == RetainerPlace.Market ? market : stored;
+            foreach (var (item, count) in positive)
+                sum[item] = sum.TryGetValue(item, out var have) ? (int)Math.Min((long)have + count, int.MaxValue) : count;
+        }
+        _retainers[id] = new RetainerSnapshot(id, name ?? "", capturedUtc.ToUniversalTime(), Positive(stored), Positive(market), placed);
     }
 
     /// <summary>Records what the saddlebag held when it was opened, replacing the old snapshot completely.</summary>
@@ -104,10 +133,14 @@ public sealed class OwnedCache
                 CapturedUtc = r.CapturedUtc,
                 Stored = Sorted(r.Stored),
                 Market = Sorted(r.Market),
+                Places = PlacesDto(r),
             }).ToList(),
         };
         return JsonSerializer.Serialize(dto, JsonOptions);
     }
+
+    private static SortedDictionary<string, SortedDictionary<uint, int>?>? PlacesDto(RetainerSnapshot r)
+        => r.Places is null ? null : new(r.Places.ToDictionary(p => p.Key.ToString(), p => (SortedDictionary<uint, int>?)Sorted(p.Value)), StringComparer.Ordinal);
 
     private static SortedDictionary<uint, int> Sorted(IReadOnlyDictionary<uint, int> counts)
         => new(counts.ToDictionary(p => p.Key, p => p.Value));
@@ -132,7 +165,7 @@ public sealed class OwnedCache
         try
         {
             var dto = JsonSerializer.Deserialize<CacheDto>(json);
-            if (dto is null || dto.Version != CurrentVersion)
+            if (dto is null || dto.Version is < 1 or > NewestReadableVersion)
                 return false;
 
             var loaded = new OwnedCache();
@@ -142,7 +175,14 @@ public sealed class OwnedCache
             {
                 if (r is null)
                     continue;
-                loaded.ReplaceRetainer(r.Id, r.Name ?? "", r.CapturedUtc, r.Stored ?? new(), r.Market ?? new());
+                if (TryReadPlaces(r.Places, out var places))
+                {
+                    loaded.ReplaceRetainer(r.Id, r.Name ?? "", r.CapturedUtc, places);
+                }
+                else
+                {
+                    loaded.ReplaceRetainer(r.Id, r.Name ?? "", r.CapturedUtc, r.Stored ?? new(), r.Market ?? new());
+                }
             }
             cache = loaded;
             return true;
@@ -152,6 +192,24 @@ public sealed class OwnedCache
             // Whatever the file holds, a bad record is an empty one: loading must never take the plugin down.
             return false;
         }
+    }
+
+    /// <summary>
+    /// Reads a retainer's optional Places member. Anything unrecognised (a missing member, an unknown or oddly cased place name, a null
+    /// entry) gives <c>false</c>, so the caller falls back to the always-written Stored and Market sums and no count is lost.
+    /// </summary>
+    private static bool TryReadPlaces(SortedDictionary<string, SortedDictionary<uint, int>?>? dto, out Dictionary<RetainerPlace, IReadOnlyDictionary<uint, int>> places)
+    {
+        places = new Dictionary<RetainerPlace, IReadOnlyDictionary<uint, int>>();
+        if (dto is null)
+            return false;
+        foreach (var (name, counts) in dto)
+        {
+            if (counts is null || !PlaceNames.TryGetValue(name, out var place))
+                return false;
+            places[place] = counts;
+        }
+        return true;
     }
 
     private sealed class CacheDto
@@ -172,8 +230,9 @@ public sealed class OwnedCache
         [JsonPropertyName("Id")] public ulong Id { get; set; }
         [JsonPropertyName("Name")] public string? Name { get; set; }
         [JsonPropertyName("CapturedUtc")] public DateTimeOffset CapturedUtc { get; set; }
-        [JsonPropertyName("Stored")] public SortedDictionary<uint, int>? Stored { get; set; }
-        [JsonPropertyName("Market")] public SortedDictionary<uint, int>? Market { get; set; }
+        [JsonPropertyName("Stored")] [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public SortedDictionary<uint, int>? Stored { get; set; }
+        [JsonPropertyName("Market")] [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public SortedDictionary<uint, int>? Market { get; set; }
+        [JsonPropertyName("Places")] [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public SortedDictionary<string, SortedDictionary<uint, int>?>? Places { get; set; }
     }
 }
 
@@ -215,5 +274,30 @@ public static class OwnedLookup
 
         return new OwnedSummary(itemId, onYou, saddlebag, saddlebagAt, retainers, source, cached, ext,
             cache.OldestRetainerCapture, cache.NewestRetainerCapture);
+    }
+
+    /// <summary>Where each retainer holds <paramref name="itemId"/>.</summary>
+    public static IReadOnlyList<RetainerLocation> Locations(uint itemId, OwnedCache cache)
+    {
+        ArgumentNullException.ThrowIfNull(cache);
+        var found = new List<RetainerLocation>();
+        foreach (var r in cache.Retainers)
+        {
+            // Same formula as OwnedCache.RetainerTotal, so the totals over all retainers add up to it exactly.
+            var total = (long)r.Stored.GetValueOrDefault(itemId) + r.Market.GetValueOrDefault(itemId);
+            if (total <= 0)
+                continue;
+            var places = new SortedDictionary<RetainerPlace, int>();
+            if (r.Places is not null)
+            {
+                foreach (var (place, counts) in r.Places)
+                {
+                    if (counts.TryGetValue(itemId, out var n) && n > 0)
+                        places[place] = n;
+                }
+            }
+            found.Add(new RetainerLocation(r.Id, r.Name, r.CapturedUtc, r.Places is not null, places, total));
+        }
+        return found.OrderByDescending(l => l.Total).ThenBy(l => l.Name, StringComparer.Ordinal).ThenBy(l => l.RetainerId).ToList();
     }
 }

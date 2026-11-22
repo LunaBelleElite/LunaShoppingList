@@ -33,13 +33,16 @@ internal sealed unsafe class OwnedItemsService : IDisposable
     private static readonly string[] SaddlebagAddons = ["InventoryBuddy", "InventoryBuddy2"];
 
     // Equipped retainer gear is deliberately not counted.
-    private static readonly GameInventoryType[] RetainerStoredTypes =
+    private static readonly (RetainerPlace Place, GameInventoryType Type)[] RetainerContainers =
     [
-        GameInventoryType.RetainerPage1, GameInventoryType.RetainerPage2, GameInventoryType.RetainerPage3, GameInventoryType.RetainerPage4,
-        GameInventoryType.RetainerPage5, GameInventoryType.RetainerPage6, GameInventoryType.RetainerPage7, GameInventoryType.RetainerCrystals,
+        (RetainerPlace.Bag1, GameInventoryType.RetainerPage1), (RetainerPlace.Bag2, GameInventoryType.RetainerPage2),
+        (RetainerPlace.Bag3, GameInventoryType.RetainerPage3), (RetainerPlace.Bag4, GameInventoryType.RetainerPage4),
+        (RetainerPlace.Bag5, GameInventoryType.RetainerPage5), (RetainerPlace.Bag6, GameInventoryType.RetainerPage6),
+        (RetainerPlace.Bag7, GameInventoryType.RetainerPage7), (RetainerPlace.Crystals, GameInventoryType.RetainerCrystals),
+        (RetainerPlace.Market, GameInventoryType.RetainerMarket),
     ];
 
-    private static readonly GameInventoryType[] RetainerMarketTypes = [GameInventoryType.RetainerMarket];
+    private static readonly GameInventoryType[] RetainerTypes = RetainerContainers.Select(c => c.Type).ToArray();
 
     // AllaganTools inventory categories: retainer bags (4), retainer market (9) and crystals (13). Crystals also cover the
     // character's own, which are left out by skipping the character's own id in the per-owner answer.
@@ -137,12 +140,23 @@ internal sealed unsafe class OwnedItemsService : IDisposable
     public DateTimeOffset? OldestRetainerCapture => Volatile.Read(ref snapshot).Cache.OldestRetainerCapture;
 
     /// <summary>
+    /// <see cref="Summarize"/> plus where each retainer holds <paramref name="itemId"/>, both from ONE read of the published snapshot so
+    /// the two always agree. Allocates, so call it only while a tooltip is open, never per row per frame.
+    /// </summary>
+    public (OwnedSummary Summary, IReadOnlyList<RetainerLocation> Locations) SummarizeWithLocations(uint itemId)
+    {
+        var s = Volatile.Read(ref snapshot);
+        return (SummarizeFrom(s, itemId), OwnedLookup.Locations(itemId, s.Cache));
+    }
+
+    /// <summary>
     /// What the current character owns of <paramref name="itemId"/>. Cheap (dictionary lookups on the published snapshot);
     /// safe to call from the draw thread every frame. Asking also marks the item for the next AllaganTools query.
     /// </summary>
-    public OwnedSummary Summarize(uint itemId)
+    public OwnedSummary Summarize(uint itemId) => SummarizeFrom(Volatile.Read(ref snapshot), itemId);
+
+    private OwnedSummary SummarizeFrom(Snapshot s, uint itemId)
     {
-        var s = Volatile.Read(ref snapshot);
         var now = Environment.TickCount64;
         if (wanted.TryAdd(itemId, now))
             newlyWanted.Enqueue(itemId);
@@ -287,8 +301,9 @@ internal sealed unsafe class OwnedItemsService : IDisposable
         // Corrupt or from an unknown version: set it aside so nothing in it is lost, then start a fresh record.
         try
         {
-            File.Move(path, path + ".bad", overwrite: true);
-            log.Warning($"The owned-items record could not be read and was kept as {Path.GetFileName(path)}.bad; starting a new one");
+            var bad = UnusedBadPath(path);
+            File.Move(path, bad);
+            log.Warning($"The owned-items record could not be read and was kept as {Path.GetFileName(bad)}; starting a new one");
         }
         catch (Exception ex)
         {
@@ -296,6 +311,19 @@ internal sealed unsafe class OwnedItemsService : IDisposable
             log.Warning(ex, "The owned-items record could not be read or set aside; retainer and saddlebag counts will not be saved this session");
         }
         return new OwnedCache();
+    }
+
+    // An earlier backup is never overwritten: the plain name if it is free, otherwise a timestamped one.
+    private static string UnusedBadPath(string path)
+    {
+        var plain = path + ".bad";
+        if (!File.Exists(plain))
+            return plain;
+        var stamped = $"{path}.{DateTime.UtcNow:yyyyMMddHHmmss}";
+        var candidate = stamped + ".bad";
+        for (var n = 2; File.Exists(candidate); n++)
+            candidate = $"{stamped}-{n}.bad";
+        return candidate;
     }
 
     private void Save(long ms)
@@ -430,26 +458,27 @@ internal sealed unsafe class OwnedItemsService : IDisposable
 
         // Every container must be loaded; a retainer that is still loading keeps its previous record.
         var ready = id != 0 && manager != null && manager->IsReady
-            && AllLoaded(RetainerStoredTypes) && AllLoaded(RetainerMarketTypes);
+            && AllLoaded(RetainerTypes);
         // The gate waits after every change of retainer and wants the same contents twice before the first capture.
         if (!gate.ShouldRead(id, ready, ms))
             return;
 
-        var stored = Count(RetainerStoredTypes);
-        var market = Count(RetainerMarketTypes);
-        if (!gate.Offer(stored, market, ms))
+        // Each container is counted on its own so the record says where an item is, not just that it is there.
+        var places = new Dictionary<RetainerPlace, IReadOnlyDictionary<uint, int>>();
+        foreach (var (place, type) in RetainerContainers)
+            places[place] = Count([type]);
+        if (!gate.Offer(places, ms))
             return;
 
         var existing = FindRetainer(id);
         var name = RetainerName(manager, id) ?? existing?.Name ?? string.Empty;
         var same = existing is not null
             && existing.Name == name
-            && OwnedCounting.SameCounts(existing.Stored, stored)
-            && OwnedCounting.SameCounts(existing.Market, market);
+            && OwnedCounting.SamePlaces(existing.Places, places);
 
         if (!visitCaptured || !same || now - existing!.CapturedUtc >= StampRefresh)
         {
-            working.ReplaceRetainer(id, name, now, stored, market);
+            working.ReplaceRetainer(id, name, now, places);
             // The first capture of a visit is saved even when nothing changed, so the record says this visit happened.
             MarkChanged(ms, contentsChanged: !visitCaptured || !same);
         }
@@ -477,7 +506,7 @@ internal sealed unsafe class OwnedItemsService : IDisposable
         var existing = FindRetainer(visitId);
         if (existing is not null && existing.CapturedUtc < visitLastVerifiedUtc)
         {
-            working.ReplaceRetainer(existing.Id, existing.Name, visitLastVerifiedUtc, existing.Stored, existing.Market);
+            OwnedCounting.CopyRetainer(working, existing, visitLastVerifiedUtc);
             MarkChanged(Environment.TickCount64);
         }
         visitCaptured = false;

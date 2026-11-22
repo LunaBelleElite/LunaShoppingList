@@ -304,6 +304,267 @@ public class OwnedCacheTests
         Assert.Equal(0, c.RetainerTotal(7));
     }
 
+    // ---- places, v1 migration, locations ----
+
+    private static IReadOnlyDictionary<RetainerPlace, IReadOnlyDictionary<uint, int>> P(params (RetainerPlace Place, uint Item, int Count)[] entries)
+    {
+        var d = new Dictionary<RetainerPlace, IReadOnlyDictionary<uint, int>>();
+        foreach (var (place, item, count) in entries)
+        {
+            if (!d.TryGetValue(place, out var inner))
+                d[place] = inner = new Dictionary<uint, int>();
+            ((Dictionary<uint, int>)inner)[item] = count;
+        }
+        return d;
+    }
+
+    private const string V1Json = "{\"Version\":1,\"Retainers\":[{\"Id\":7,\"Name\":\"Old\",\"CapturedUtc\":\"2026-03-01T10:00:00+00:00\",\"Stored\":{\"5\":3},\"Market\":{\"5\":2}}]}";
+
+    [Fact]
+    public void PlacedReplaceSplitsStoredAndMarketAndKeepsPlaces()
+    {
+        var c = new OwnedCache();
+        c.ReplaceRetainer(1, "A", T1, P((RetainerPlace.Bag1, 5, 4), (RetainerPlace.Bag3, 5, 6), (RetainerPlace.Crystals, 5, 1), (RetainerPlace.Market, 5, 2), (RetainerPlace.Bag2, 9, 7)));
+        var r = Assert.Single(c.Retainers);
+        Assert.True(r.LocationRecorded);
+        Assert.Equal(11, r.Stored[5]);
+        Assert.Equal(7, r.Stored[9]);
+        Assert.Equal(2, r.Market[5]);
+        Assert.False(r.Market.ContainsKey(9));
+        Assert.Equal(6, r.Places![RetainerPlace.Bag3][5]);
+        Assert.Equal(13L, c.RetainerTotal(5));
+    }
+
+    [Fact]
+    public void PlacedReplaceDropsNonPositiveCountsAndEmptyPlaces()
+    {
+        var c = new OwnedCache();
+        c.ReplaceRetainer(1, "A", T1, P((RetainerPlace.Bag1, 5, 0), (RetainerPlace.Bag2, 6, -3), (RetainerPlace.Bag3, 7, 2)));
+        var r = Assert.Single(c.Retainers);
+        Assert.Equal(new[] { RetainerPlace.Bag3 }, r.Places!.Keys.ToArray());
+        Assert.Equal(new[] { 7u }, r.Stored.Keys.ToArray());
+    }
+
+    [Fact]
+    public void PlacedReplaceReplacesOldPlacesCompletely()
+    {
+        var c = new OwnedCache();
+        c.ReplaceRetainer(1, "A", T1, P((RetainerPlace.Bag1, 5, 4), (RetainerPlace.Market, 5, 2)));
+        c.ReplaceRetainer(1, "A", T2, P((RetainerPlace.Bag2, 5, 1)));
+        var r = Assert.Single(c.Retainers);
+        Assert.Equal(new[] { RetainerPlace.Bag2 }, r.Places!.Keys.ToArray());
+        Assert.Equal(1L, c.RetainerTotal(5));
+    }
+
+    [Fact]
+    public void PlacedReplaceUpgradesAnUnplacedRecord()
+    {
+        var c = OwnedCache.FromJson(V1Json);
+        Assert.False(c.Retainers[0].LocationRecorded);
+        c.ReplaceRetainer(7, "Old", T2, P((RetainerPlace.Bag1, 5, 5)));
+        Assert.True(c.Retainers[0].LocationRecorded);
+    }
+
+    // Superseded 2026-11-21: this test was JsonV2RoundTripKeepsPlaces and expected "Version": 2. The saved-file version is no
+    // longer bumped (a downgrade must keep every count), so the file stays Version 1 and carries Places as an extra member.
+    [Fact]
+    public void JsonRoundTripKeepsPlacesAndStaysVersionOne()
+    {
+        var c = new OwnedCache();
+        c.ReplaceRetainer(900, "Zed", T2, P((RetainerPlace.Bag2, 20, 5), (RetainerPlace.Crystals, 2, 9), (RetainerPlace.Market, 7, 1)));
+        c.ReplaceRetainer(100, "Ann", T3, P((RetainerPlace.Bag1, 1, 4)));
+        var json = c.ToJson();
+        Assert.Contains("\"Version\": 1", json);
+
+        var back = OwnedCache.FromJson(json);
+        var zed = back.Retainers.Single(r => r.Id == 900);
+        Assert.True(zed.LocationRecorded);
+        Assert.Equal(5, zed.Places![RetainerPlace.Bag2][20]);
+        Assert.Equal(9, zed.Places[RetainerPlace.Crystals][2]);
+        Assert.Equal(1, zed.Places[RetainerPlace.Market][7]);
+        Assert.Equal(1, zed.Market[7]);
+        Assert.Equal(json, back.ToJson());
+    }
+
+    [Fact]
+    public void JsonAlwaysWritesStoredAndMarketSumsSoAnOlderReaderKeepsEveryCount()
+    {
+        var c = new OwnedCache();
+        c.ReplaceRetainer(1, "A", T1, P((RetainerPlace.Bag1, 5, 4), (RetainerPlace.Bag3, 5, 6), (RetainerPlace.Crystals, 5, 1), (RetainerPlace.Market, 5, 2)));
+        c.ReplaceRetainer(2, "Old", T1, C((5, 7)), C((5, 3)));
+
+        using var doc = System.Text.Json.JsonDocument.Parse(c.ToJson());
+        Assert.Equal(1, doc.RootElement.GetProperty("Version").GetInt32());
+        long sum = 0;
+        foreach (var r in doc.RootElement.GetProperty("Retainers").EnumerateArray())
+        {
+            sum += r.GetProperty("Stored").GetProperty("5").GetInt64() + r.GetProperty("Market").GetProperty("5").GetInt64();
+        }
+        Assert.Equal(c.RetainerTotal(5), sum);
+        Assert.Equal(23L, sum);
+    }
+
+    [Fact]
+    public void VersionOneFileLoadsWithUnplacedCounts()
+    {
+        Assert.True(OwnedCache.TryFromJson(V1Json, out var c));
+        var r = Assert.Single(c.Retainers);
+        Assert.False(r.LocationRecorded);
+        Assert.Null(r.Places);
+        Assert.Equal(3, r.Stored[5]);
+        Assert.Equal(2, r.Market[5]);
+        Assert.Equal(5L, c.RetainerTotal(5));
+    }
+
+    // Superseded 2026-11-21: this test was VersionOneFileIsWrittenBackAsVersionTwoWithoutLosingCounts and expected "Version": 2;
+    // the file is now written as Version 1.
+    [Fact]
+    public void VersionOneFileIsWrittenBackAsVersionOneWithoutLosingCounts()
+    {
+        var c = OwnedCache.FromJson(V1Json);
+        Assert.Contains("\"Version\": 1", c.ToJson());
+        var back = OwnedCache.FromJson(c.ToJson());
+        var r = Assert.Single(back.Retainers);
+        Assert.False(r.LocationRecorded);
+        Assert.Equal(5L, back.RetainerTotal(5));
+    }
+
+    [Fact]
+    public void VersionTwoFileIsStillAccepted()
+    {
+        const string json = "{\"Version\":2,\"Retainers\":[{\"Id\":1,\"Name\":\"A\",\"CapturedUtc\":\"2026-03-01T10:00:00+00:00\"," +
+            "\"Places\":{\"Bag2\":{\"5\":4},\"Market\":{\"5\":1}}}]}";
+        Assert.True(OwnedCache.TryFromJson(json, out var c));
+        var r = Assert.Single(c.Retainers);
+        Assert.True(r.LocationRecorded);
+        Assert.Equal(5L, c.RetainerTotal(5));
+    }
+
+    [Theory]
+    [InlineData("{\"Version\":3,\"Retainers\":[]}")]
+    [InlineData("{\"Version\":0,\"Retainers\":[]}")]
+    public void NewerOrUnknownVersionStillFails(string json)
+    {
+        Assert.False(OwnedCache.TryFromJson(json, out var c));
+        Assert.Equal(0, c.RetainerCount);
+    }
+
+    // Superseded 2026-11-21: this test was VersionTwoIgnoresUnknownPlaceNamesAndNonPositiveCounts and expected an unknown place
+    // key to be skipped while the rest of Places was used. That silently shrinks the count, so a record with any unknown place
+    // key now falls back to its Stored and Market sums and is flagged as having no known locations.
+    [Theory]
+    [InlineData("Bag9")]
+    [InlineData("bag1")]
+    [InlineData("3")]
+    [InlineData("")]
+    public void AnUnknownPlaceKeyFallsBackToTheSumsAndNeverShrinksTheTotal(string key)
+    {
+        var json = "{\"Version\":1,\"Retainers\":[{\"Id\":1,\"Name\":\"A\",\"CapturedUtc\":\"2026-03-01T10:00:00+00:00\"," +
+            "\"Stored\":{\"5\":9},\"Market\":{\"5\":1},\"Places\":{\"Bag1\":{\"5\":4},\"" + key + "\":{\"5\":6}}}]}";
+        var c = OwnedCache.FromJson(json);
+        var r = Assert.Single(c.Retainers);
+        Assert.False(r.LocationRecorded);
+        Assert.Null(r.Places);
+        Assert.Equal(10L, c.RetainerTotal(5));
+        Assert.Equal(10L, Assert.Single(OwnedLookup.Locations(5, c)).Total);
+    }
+
+    [Fact]
+    public void ValidPlacesAreUsedAndNonPositiveCountsIgnored()
+    {
+        const string json = "{\"Version\":1,\"Retainers\":[{\"Id\":1,\"Name\":\"A\",\"CapturedUtc\":\"2026-03-01T10:00:00+00:00\"," +
+            "\"Stored\":{\"6\":2},\"Market\":{},\"Places\":{\"Bag1\":{\"5\":-1,\"6\":2}}}]}";
+        var c = OwnedCache.FromJson(json);
+        var r = Assert.Single(c.Retainers);
+        Assert.True(r.LocationRecorded);
+        Assert.Equal(new[] { RetainerPlace.Bag1 }, r.Places!.Keys.ToArray());
+        Assert.Equal(0L, c.RetainerTotal(5));
+        Assert.Equal(2L, c.RetainerTotal(6));
+    }
+
+    [Fact]
+    public void ANullPlaceEntryFallsBackToTheSums()
+    {
+        const string json = "{\"Version\":1,\"Retainers\":[{\"Id\":1,\"Name\":\"A\",\"CapturedUtc\":\"2026-03-01T10:00:00+00:00\"," +
+            "\"Stored\":{\"5\":9},\"Market\":{},\"Places\":{\"Bag1\":null}}]}";
+        var c = OwnedCache.FromJson(json);
+        Assert.False(Assert.Single(c.Retainers).LocationRecorded);
+        Assert.Equal(9L, c.RetainerTotal(5));
+    }
+
+    private static OwnedCache LocationCache()
+    {
+        var c = new OwnedCache();
+        c.ReplaceRetainer(1, "Zoe", T1, P((RetainerPlace.Bag2, 5, 12), (RetainerPlace.Market, 5, 3), (RetainerPlace.Bag1, 8, 1)));
+        c.ReplaceRetainer(2, "Abe", T2, P((RetainerPlace.Crystals, 5, 15)));
+        c.ReplaceRetainer(3, "Max", T3, P((RetainerPlace.Bag7, 5, 40)));
+        c.ReplaceRetainer(4, "Nil", T3, P((RetainerPlace.Bag1, 8, 9)));
+        c.ReplaceRetainer(5, "Kit", T1, P((RetainerPlace.Bag4, 5, 15)));
+        return c;
+    }
+
+    [Fact]
+    public void LocationsListOnlyRetainersHoldingTheItemSortedByTotalThenName()
+    {
+        var l = OwnedLookup.Locations(5, LocationCache());
+        Assert.Equal(new[] { "Max", "Abe", "Kit", "Zoe" }, l.Select(x => x.Name).ToArray());
+        Assert.Equal(new long[] { 40, 15, 15, 15 }, l.Select(x => x.Total).ToArray());
+    }
+
+    [Fact]
+    public void LocationsCarryPerPlaceCountsInContainerOrderAndTheCaptureTime()
+    {
+        var zoe = OwnedLookup.Locations(5, LocationCache()).Single(x => x.Name == "Zoe");
+        Assert.True(zoe.LocationRecorded);
+        Assert.Equal(new[] { RetainerPlace.Bag2, RetainerPlace.Market }, zoe.Places.Keys.ToArray());
+        Assert.Equal(12, zoe.Places[RetainerPlace.Bag2]);
+        Assert.Equal(3, zoe.Places[RetainerPlace.Market]);
+        Assert.Equal(T1, zoe.CapturedUtc);
+        Assert.Equal(1UL, zoe.RetainerId);
+    }
+
+    [Fact]
+    public void LocationsOfAnItemNobodyHoldsIsEmpty()
+        => Assert.Empty(OwnedLookup.Locations(999, LocationCache()));
+
+    [Fact]
+    public void LocationsOfAnEmptyCacheIsEmpty()
+        => Assert.Empty(OwnedLookup.Locations(5, new OwnedCache()));
+
+    [Fact]
+    public void LocationsOfAnUnplacedRecordAreFlaggedAndStillCounted()
+    {
+        var c = OwnedCache.FromJson(V1Json);
+        var l = Assert.Single(OwnedLookup.Locations(5, c));
+        Assert.False(l.LocationRecorded);
+        Assert.Empty(l.Places);
+        Assert.Equal(5L, l.Total);
+        Assert.Empty(OwnedLookup.Locations(6, c));
+    }
+
+    [Fact]
+    public void LocationTotalsAlwaysAddUpToTheRetainerTotal()
+    {
+        var c = LocationCache();
+        c.ReplaceRetainer(6, "Old", T1, C((5, 7), (8, 2)), C((5, 3)));
+        c.ReplaceRetainer(7, "Big", T1, P((RetainerPlace.Bag1, 5, int.MaxValue), (RetainerPlace.Bag2, 5, int.MaxValue), (RetainerPlace.Market, 5, 1)));
+        foreach (uint item in new uint[] { 5, 8, 999 })
+            Assert.Equal(c.RetainerTotal(item), OwnedLookup.Locations(item, c).Sum(x => x.Total));
+    }
+
+    [Fact]
+    public void LocationsMixUnplacedAndPlacedRecords()
+    {
+        var c = new OwnedCache();
+        c.ReplaceRetainer(1, "Old", T1, C((5, 7)), C((5, 3)));
+        c.ReplaceRetainer(2, "New", T1, P((RetainerPlace.Bag1, 5, 4)));
+        var l = OwnedLookup.Locations(5, c);
+        Assert.Equal(new[] { "Old", "New" }, l.Select(x => x.Name).ToArray());
+        Assert.False(l[0].LocationRecorded);
+        Assert.True(l[1].LocationRecorded);
+        Assert.Equal(14L, l.Sum(x => x.Total));
+    }
+
     // ---- lookup ----
 
     private static readonly Dictionary<uint, int> Live = C((5, 12), (6, 0));
