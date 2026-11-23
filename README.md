@@ -90,11 +90,17 @@ one out.
   for just those. Your choices are remembered for Artisan and My shopping lists.
 - **Exclude items I have enough of** unticks every row where what you hold
   already covers the quantity. A row whose count isn't known yet stays ticked.
+- **Exclude crafted items** unticks every craftable ingredient, so only raw
+  materials stay ticked. Crystals, shards and clusters are left alone, and it
+  also unticks ones you ticked by hand. If recipe data is still loading, it
+  tells you to press it again.
 - Click a column header to sort by it, and click again to reverse it. Sorting
   isn't saved, so closing the window puts the rows back in the list's own order.
 - **On you** and **Retainers** show how many you already hold. Hover Retainers
   to see which retainer has it. The **Vendor** column shows when an NPC also
-  sells the item. Hover it for the vendor and where they stand. Columns start
+  sells the item. Hover it for the vendor and where they stand. An item nothing
+  sells shows **Craftable** there, and one that has a vendor and can also be
+  crafted adds (craftable) after the vendor text. Columns start
   as wide as their longest text, and you can drag a border to change that.
 - **Reload list** reads the list again. Use it if you changed the list somewhere
   else, or if the window says recipe data is still loading.

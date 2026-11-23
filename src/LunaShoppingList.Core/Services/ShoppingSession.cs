@@ -66,14 +66,16 @@ public sealed class ShoppingSession
     /// user explicitly ticked on (<see cref="ExportIncludes"/>).
     /// </summary>
     /// <param name="recipes">Finds the recipe that makes an item.</param>
-    public void ExcludeCrafted(IRecipeLookup recipes)
+    /// <param name="overrideHandTicks">True when the player pressed a button for it: items they ticked by hand are unticked too.</param>
+    public void ExcludeCrafted(IRecipeLookup recipes, bool overrideHandTicks = false)
     {
         ArgumentNullException.ThrowIfNull(recipes);
         var crafted = _requirements
-            .Where(r => !_explicitIncludes.Contains(r.ItemId) && !_items.IsCrystalLike(r.ItemId) && recipes.FindRecipeForItem(r.ItemId) != null)
+            .Where(r => (overrideHandTicks || !_explicitIncludes.Contains(r.ItemId)) && !_items.IsCrystalLike(r.ItemId) && recipes.FindRecipeForItem(r.ItemId) != null)
             .Select(r => r.ItemId)
             .ToList();
         Exclusions.ExcludeAll(crafted, true);
+        if (overrideHandTicks) foreach (var id in crafted) _explicitIncludes.Remove(id);
     }
 
     /// <summary>

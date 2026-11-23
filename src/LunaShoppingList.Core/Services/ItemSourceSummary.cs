@@ -11,6 +11,21 @@ public static class ItemSourceSummary
     /// <summary>Column text for an item no vendor sells.</summary>
     public const string NoneText = "-";
 
+    /// <summary>Column text for an item that can be crafted and that no vendor sells.</summary>
+    public const string CraftableText = "Craftable";
+
+    /// <summary>
+    /// Adds the crafting hint to a vendor column text: a craftable item nothing sells (or whose vendors are not known yet)
+    /// reads <see cref="CraftableText"/>, one with vendors reads e.g. "1,200 gil (craftable)"; anything else is unchanged.
+    /// </summary>
+    /// <param name="vendorText">The text from <see cref="ColumnText(IItemSources, uint)"/>.</param>
+    /// <param name="craftable">True when the item has a recipe.</param>
+    public static string WithCraftable(string vendorText, bool craftable)
+    {
+        if (!craftable) return vendorText;
+        return vendorText == NoneText || vendorText == NotReadyText ? CraftableText : vendorText + " (craftable)";
+    }
+
     /// <summary>Tooltip lines shown before the rest is summarised as '+N more'.</summary>
     public const int DefaultTooltipLines = 10;
 

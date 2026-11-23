@@ -43,6 +43,33 @@ public class ShoppingSessionCraftedTests
     }
 
     [Fact]
+    public void ExcludeCrafted_ButtonPress_OverridesAHandTick()
+    {
+        var s = Loaded();
+        s.SetIncluded(Ingot, true);
+        s.ExcludeCrafted(new FakeLookup(Ingot, Plate), overrideHandTicks: true);
+        Assert.False(s.IsIncluded(Ingot));
+        Assert.DoesNotContain(Ingot, s.ExportIncludes());
+    }
+
+    [Fact]
+    public void ExcludeCrafted_ButtonPress_StillSkipsCrystals()
+    {
+        var s = Loaded();
+        s.ExcludeCrafted(new FakeLookup(Crystal1, Ingot), overrideHandTicks: true);
+        Assert.True(s.IsIncluded(Crystal1));
+    }
+
+    [Fact]
+    public void ExcludeCrafted_Automatic_StillKeepsAHandTick()
+    {
+        var s = Loaded();
+        s.SetIncluded(Ingot, true);
+        s.ExcludeCrafted(new FakeLookup(Ingot));
+        Assert.True(s.IsIncluded(Ingot));
+    }
+
+    [Fact]
     public void ExcludeCrafted_UntickCraftedIngredients()
     {
         var s = Loaded();

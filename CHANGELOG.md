@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.1.0 - 2026-11-23
+
+This covers everything since 0.12.0.0.
+
+- New Exclude crafted items button in the ingredients window, after Exclude items I have enough of. It unticks every craftable ingredient so only raw materials remain. Crystals, shards and clusters are never touched. It also unticks ones you ticked by hand. If the recipe data is still loading, it says to press again.
+- The Vendor column now shows Craftable for items that nothing sells. Where a vendor does sell the item and it can also be crafted, it shows the vendor text followed by (craftable). Hover a craftable-only cell and it says the item can be crafted.
+- Not yet checked in the game: any of the above.
+
 ## 0.12.0.0 - 2026-11-22
 
 This covers everything since 0.10.0.5.

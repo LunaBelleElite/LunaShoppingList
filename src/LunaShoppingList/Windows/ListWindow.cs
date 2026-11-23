@@ -51,6 +51,8 @@ public sealed class ListWindow : Window, IDisposable
 
     // True when the Exclude crafted items option was on but the recipe index was not built yet, so nothing was unticked.
     private bool craftedPending;
+    // Shown under the ingredient buttons after the Exclude crafted items button could not run yet.
+    private string craftedButtonNote = string.Empty;
     // True when a custom list has goals but the recipe index was not built yet, so only its plain rows were loaded.
     private bool goalsPending;
     // True once a tick was changed in this window since the list was last loaded; the automatic reload then leaves the rows alone.
@@ -477,6 +479,13 @@ public sealed class ListWindow : Window, IDisposable
         }
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Unticks every ingredient where what you hold (bags, saddlebag, retainers) already covers the quantity needed.\nRetainer counts are as of your last visit to each retainer. Items you have not got enough of stay as they are.");
+        ImGui.SameLine();
+        if (ImGui.Button("Exclude crafted items"))
+            ExcludeCraftedNow();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Unticks every ingredient that can be crafted, so only the raw materials are left to buy.\nCrystals, shards and clusters are not touched.");
+        if (craftedButtonNote.Length > 0)
+            WrappedColored(DimColor, craftedButtonNote);
 
         // The table follows the window: it takes what is left after keeping room for the Build row,
         // its status and error lines, the login warning and the footnote.
@@ -644,25 +653,41 @@ public sealed class ListWindow : Window, IDisposable
     {
         var minimum = VendorColumnWidth(padding);
         var fontKey = ImGui.CalcTextSize("Vendor").X;
-        if (vendorWantedWidth < 0f || vendorWantedReady != sources.IsReady || Math.Abs(fontKey - vendorWantedFontKey) > 0.01f)
+        if (vendorWantedWidth < 0f || vendorWantedReady != VendorInfoReady || Math.Abs(fontKey - vendorWantedFontKey) > 0.01f)
         {
             var widest = 0f;
             foreach (var r in rows)
                 widest = Math.Max(widest, ImGui.CalcTextSize(VendorText(r.ItemId)).X);
             vendorWantedWidth = Math.Max(minimum, widest + padding);
-            vendorWantedReady = sources.IsReady;
+            vendorWantedReady = VendorInfoReady;
             vendorWantedFontKey = fontKey;
         }
         return Math.Min(vendorWantedWidth, Math.Max(minimum, tableWidth * 0.6f));
     }
 
-    /// <summary>The Vendor column text for an item, cached once the vendor index is ready.</summary>
+    /// <summary>The vendors alone, cached once the vendor index is ready.</summary>
+    private string RawVendorText(uint itemId) => ItemSourceSummary.ColumnText(sources, itemId);
+
+    /// <summary>True once the vendor index and the recipe index are both built (or the recipe index failed, so it will not change).</summary>
+    private bool VendorInfoReady => sources.IsReady && (recipes is not LuminaRecipeData d || d.IsResultIndexReady || d.IsResultIndexFailed);
+
+    private bool IsCraftable(uint itemId)
+    {
+        if (recipes is LuminaRecipeData { IsResultIndexReady: false } data)
+        {
+            data.WarmUp();
+            return false;
+        }
+        return recipes.FindRecipeForItem(itemId) != null;
+    }
+
+    /// <summary>The Vendor column text for an item (vendors, plus a craftable hint), cached once everything it reads is ready.</summary>
     private string VendorText(uint itemId)
     {
         if (!vendorText.TryGetValue(itemId, out var text))
         {
-            text = ItemSourceSummary.ColumnText(sources, itemId);
-            if (sources.IsReady)
+            text = ItemSourceSummary.WithCraftable(RawVendorText(itemId), IsCraftable(itemId));
+            if (VendorInfoReady)
                 vendorText[itemId] = text;
         }
         return text;
@@ -670,6 +695,20 @@ public sealed class ListWindow : Window, IDisposable
 
     /// <summary>Bags, crystals and saddlebag; <c>null</c> until the bags have been read for this character.</summary>
     internal static long? OnYouTotal(OwnedSummary s) => s.OnYou is int now ? (long)now + (s.Saddlebag ?? 0) : null;
+
+    /// <summary>The button: unticks crafted ingredients now. While the recipe index is still building it only starts that and says to press again.</summary>
+    private void ExcludeCraftedNow()
+    {
+        if (recipes is LuminaRecipeData { IsResultIndexReady: false } data)
+        {
+            data.WarmUp();
+            craftedButtonNote = data.IsResultIndexFailed ? RecipesFailedText : "Recipe data is still loading. Press the button again in a moment.";
+            return;
+        }
+        craftedButtonNote = string.Empty;
+        session.ExcludeCrafted(recipes, overrideHandTicks: true);
+        PersistExclusions();
+    }
 
     /// <summary>Bags, saddlebag and retainers together; <c>null</c> when neither the bags nor any retainer has been read.</summary>
     private long? OwnedEverywhere(uint itemId)
@@ -761,8 +800,10 @@ public sealed class ListWindow : Window, IDisposable
     private void DrawVendor(uint itemId)
     {
         var text = VendorText(itemId);
-        var hasSources = text != ItemSourceSummary.NoneText && text != ItemSourceSummary.NotReadyText;
-        if (hasSources)
+        var raw = RawVendorText(itemId);
+        var hasSources = raw != ItemSourceSummary.NoneText && raw != ItemSourceSummary.NotReadyText;
+        var craftable = text != raw;
+        if (hasSources || craftable)
         {
             // The normal text colour, softened, so real sources read as calm secondary information in light and dark themes.
             var calm = ImGui.GetStyle().Colors[(int)ImGuiCol.Text];
@@ -775,7 +816,7 @@ public sealed class ListWindow : Window, IDisposable
         }
         if (!ImGui.IsItemHovered()) return;
 
-        if (!sources.IsReady)
+        if (!sources.IsReady && !craftable)
         {
             ImGui.BeginTooltip();
             try
@@ -790,7 +831,11 @@ public sealed class ListWindow : Window, IDisposable
             }
             return;
         }
-        if (!hasSources) return;
+        if (!hasSources)
+        {
+            ImGui.SetTooltip($"{Name(itemId)} can be crafted.");
+            return;
+        }
 
         var (shown, more) = ItemSourceSummary.Capped(ItemSourceSummary.Ordered(sources.For(itemId)), ItemSourceSummary.DefaultTooltipLines);
         ImGui.BeginTooltip();
