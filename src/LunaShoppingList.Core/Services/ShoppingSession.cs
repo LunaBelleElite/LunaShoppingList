@@ -76,6 +76,23 @@ public sealed class ShoppingSession
         Exclusions.ExcludeAll(crafted, true);
     }
 
+    /// <summary>
+    /// Unticks every ingredient the player already holds enough of (owned count at least the quantity needed), on top of the
+    /// exclusions already set; nothing is ever re-included. An unknown count (<c>null</c>) or none owned leaves the item ticked.
+    /// This is an explicit request, so it also overrides an item the user ticked on by hand.
+    /// </summary>
+    /// <param name="ownedTotal">The owned count of an item (bags, saddlebag and retainers), or <c>null</c> when not known.</param>
+    public void ExcludeOwned(Func<uint, long?> ownedTotal)
+    {
+        ArgumentNullException.ThrowIfNull(ownedTotal);
+        var covered = _requirements
+            .Where(r => r.Quantity > 0 && ownedTotal(r.ItemId) is long have && have >= r.Quantity)
+            .Select(r => r.ItemId)
+            .ToList();
+        Exclusions.ExcludeAll(covered, true);
+        foreach (var id in covered) _explicitIncludes.Remove(id);
+    }
+
     /// <summary>Includes or excludes every current requirement, crystals too; exclusions for items not in the list are kept.</summary>
     /// <param name="included">True to buy everything, false to skip everything.</param>
     public void SetAllIncluded(bool included)

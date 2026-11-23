@@ -100,6 +100,66 @@ public sealed class ListBrowserWindow : Window
     private EffectiveRequirementsResult? materials;
     private bool materialsDirty = true;
     private bool materialsWarmRequested;
+    // Display order of the two tables (click-to-sort headers). Window-only, never saved; the stored order never changes.
+    private readonly SortedRows goalSort = new();
+    private readonly SortedRows itemSort = new();
+
+    /// <summary>
+    /// The display order of one table, cached: the rows are ordered again only when the sort column or direction, the
+    /// list, or the rows (count or item ids in stored order) changed, or after a quantity edit was committed.
+    /// </summary>
+    private sealed class SortedRows
+    {
+        private string? listId;
+        private int column = -1;
+        private bool ascending = true;
+        private bool dirty = true;
+        private uint[] storedIds = [];
+        private IReadOnlyList<CustomListItem> view = [];
+
+        /// <summary>The next call orders the rows again (a finished quantity edit may have moved a row).</summary>
+        public void Touch() => dirty = true;
+
+        public IReadOnlyList<CustomListItem> Get(string id, List<CustomListItem> rows, int sortColumn, bool sortAscending,
+            Func<uint, string> name)
+        {
+            if (!dirty && listId == id && column == sortColumn && ascending == sortAscending && storedIds.Length == rows.Count)
+            {
+                var same = true;
+                for (var i = 0; i < rows.Count && same; i++)
+                    same = storedIds[i] == rows[i].ItemId;
+                if (same)
+                    return view;
+            }
+
+            Comparison<CustomListItem>? comparison = sortColumn switch
+            {
+                0 => (a, b) => TableSort.CompareText(name(a.ItemId), name(b.ItemId)),
+                1 => (a, b) => a.Quantity.CompareTo(b.Quantity),
+                _ => null,
+            };
+            view = TableSort.Order(rows, comparison, sortAscending);
+            storedIds = new uint[rows.Count];
+            for (var i = 0; i < rows.Count; i++)
+                storedIds[i] = rows[i].ItemId;
+            listId = id;
+            column = sortColumn;
+            ascending = sortAscending;
+            dirty = false;
+            return view;
+        }
+    }
+
+    /// <summary>The sort the open table's header clicks chose: no column (stored order), or a column and a direction.</summary>
+    private static (int Column, bool Ascending) ReadSortSpecs()
+    {
+        var specs = ImGui.TableGetSortSpecs();
+        if (specs.IsNull || specs.SpecsCount < 1)
+            return (-1, true);
+        var spec = specs.Specs;
+        specs.SpecsDirty = false;
+        return (spec.ColumnIndex, spec.SortDirection != ImGuiSortDirection.Descending);
+    }
 
     internal ListBrowserWindow(Configuration config, IArtisanListSource artisan, IItemInfo items, IItemCatalog catalog,
         IRecipeLookup recipes, IRecipeData recipeData, WindowManager manager, IPluginLog log)
@@ -581,7 +641,7 @@ public sealed class ListBrowserWindow : Window
         var tableOpen = false;
         try
         {
-            tableOpen = ImGui.BeginTable("##customGoals", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Resizable);
+            tableOpen = ImGui.BeginTable("##customGoals", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Resizable | ImGuiTableFlags.Sortable | ImGuiTableFlags.SortTristate);
             if (tableOpen)
             {
                 var style = ImGui.GetStyle();
@@ -589,13 +649,16 @@ public sealed class ListBrowserWindow : Window
                 ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch, 1f);
                 ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed,
                     ImGui.CalcTextSize("9,999,999").X + style.FramePadding.X * 2 + (ImGui.GetFrameHeight() + style.ItemInnerSpacing.X) * 2 + padding);
-                ImGui.TableSetupColumn("##actions", ImGuiTableColumnFlags.WidthFixed, ButtonWidth("Remove") + padding);
+                ImGui.TableSetupColumn("##actions", ImGuiTableColumnFlags.WidthFixed | ImGuiTableColumnFlags.NoSort, ButtonWidth("Remove") + padding);
                 ImGui.TableHeadersRow();
 
-                // Goals are only read here; a removal is applied after the loop.
-                for (var i = 0; i < list.Goals.Count; i++)
+                // Goals are only read here; a removal is applied after the loop. Only the display order is sorted: every id
+                // and every edit below uses the goal's item id, never its position.
+                var (sortColumn, sortAscending) = ReadSortSpecs();
+                var rows = goalSort.Get(list.Id, list.Goals, sortColumn, sortAscending, ItemName);
+                for (var i = 0; i < rows.Count; i++)
                 {
-                    var goal = list.Goals[i];
+                    var goal = rows[i];
                     ImGui.PushID((int)goal.ItemId);
                     try
                     {
@@ -638,7 +701,10 @@ public sealed class ListBrowserWindow : Window
         PushWrappedDim(GoalsNoteText);
 
         if (commitQuantity)
+        {
+            goalSort.Touch();
             Commit(list);
+        }
         if (removeId != 0)
             RemoveGoal(list, removeId);
     }
@@ -730,7 +796,7 @@ public sealed class ListBrowserWindow : Window
         var tableOpen = false;
         try
         {
-            tableOpen = ImGui.BeginTable("##customItems", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Resizable);
+            tableOpen = ImGui.BeginTable("##customItems", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Resizable | ImGuiTableFlags.Sortable | ImGuiTableFlags.SortTristate);
             if (tableOpen)
             {
                 var style = ImGui.GetStyle();
@@ -738,13 +804,16 @@ public sealed class ListBrowserWindow : Window
                 ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch, 1f);
                 ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed,
                     ImGui.CalcTextSize("9,999,999").X + style.FramePadding.X * 2 + (ImGui.GetFrameHeight() + style.ItemInnerSpacing.X) * 2 + padding);
-                ImGui.TableSetupColumn("##actions", ImGuiTableColumnFlags.WidthFixed, ButtonWidth("Remove") + padding);
+                ImGui.TableSetupColumn("##actions", ImGuiTableColumnFlags.WidthFixed | ImGuiTableColumnFlags.NoSort, ButtonWidth("Remove") + padding);
                 ImGui.TableHeadersRow();
 
-                // Rows are only read here; a removal is applied after the loop.
-                for (var i = 0; i < list.Items.Count; i++)
+                // Rows are only read here; a removal is applied after the loop. Only the display order is sorted: every id
+                // and every edit below uses the row's item id, never its position.
+                var (sortColumn, sortAscending) = ReadSortSpecs();
+                var rows = itemSort.Get(list.Id, list.Items, sortColumn, sortAscending, ItemName);
+                for (var i = 0; i < rows.Count; i++)
                 {
-                    var row = list.Items[i];
+                    var row = rows[i];
                     ImGui.PushID((int)row.ItemId);
                     try
                     {
@@ -785,7 +854,10 @@ public sealed class ListBrowserWindow : Window
         }
 
         if (commitQuantity)
+        {
+            itemSort.Touch();
             Commit(list);
+        }
         if (removeId != 0)
             RemoveRow(list, removeId);
     }

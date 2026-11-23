@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.12.0.0 - 2026-11-22
+
+This covers everything since 0.10.0.5.
+
+- Every table header is now clickable. One click sorts ascending and a second sorts descending, and a third clears the sort. It works on the ingredients table, both tables in a shopping list, the offers table in the results window and the route tables. The sort isn't saved, so closing the window puts the rows back in the list's own order.
+- Sorting puts unknown counts lowest in On you and Retainers, and ticked rows first in Buy. In the Vendor column, rows with a vendor come first, gil vendors before currency vendors. If you sort a route table, the item list on the left follows it.
+- The Vendor column is now as wide as its longest text, so entries such as "150 Purple Gatherers' Scrip" are no longer cut off. In the results window the For sale, Unit price, Cost, Qty and Price columns are fitted the same way, so a range such as "15,150-17,000" no longer runs into the next column.
+- The route tables in the results window have columns you can drag wider or narrower.
+- New Show item list checkbox in the results window. Untick it to hide the per-item prices and give the route the whole window. It isn't saved.
+- The item list on the left of the results window now follows the route: the first world's items first, then down each world, with items the plan buys nowhere last. Every item starts collapsed, so open one to see the other worlds that sell it. The header still says if the plan is short.
+- Item headers now read "have 0 of 1 - plan buys 1" instead of "bought 1 of 1". Have is what is on you right now and goes up as you buy. Plan buys is what the current plan would purchase.
+- New Exclude items I have enough of button in the ingredients window, next to the crystals toggle. It unticks every ingredient where what you hold already covers the quantity, counting bags, crystals, saddlebag and retainers as of your last visit. An item whose count isn't known yet stays ticked. It's a one-off press, and the result is saved with the list's exclusions.
+- Fixed: tables were already sorted by their first column before you clicked anything, so the route didn't match the item list on the left. They now start in their natural order.
+- Not yet checked in the game: any of the above.
+
 ## 0.10.0.5 - 2026-11-22
 
 This covers everything since 0.10.0.1.

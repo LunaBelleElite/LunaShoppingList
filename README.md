@@ -88,10 +88,14 @@ one out.
 - Untick **Buy** on anything you don't need. **Check/uncheck all** ticks or
   unticks every row at once. **Toggle all crystals/shards/clusters** does the same
   for just those. Your choices are remembered for Artisan and My shopping lists.
+- **Exclude items I have enough of** unticks every row where what you hold
+  already covers the quantity. A row whose count isn't known yet stays ticked.
+- Click a column header to sort by it, and click again to reverse it. Sorting
+  isn't saved, so closing the window puts the rows back in the list's own order.
 - **On you** and **Retainers** show how many you already hold. Hover Retainers
   to see which retainer has it. The **Vendor** column shows when an NPC also
-  sells the item. Hover it for the vendor and where they stand. Drag a column
-  border if it's too narrow.
+  sells the item. Hover it for the vendor and where they stand. Columns start
+  as wide as their longest text, and you can drag a border to change that.
 - **Reload list** reads the list again. Use it if you changed the list somewhere
   else, or if the window says recipe data is still loading.
 - Press **Build shopping list**. Prices come from Universalis and the results
@@ -103,6 +107,9 @@ one out.
   amount of gil. It picks the plan that visits the fewest worlds within that
   budget. Click a different option in the list to use it, or slide to zero for
   the cheapest. **Reset to cheapest** does the same in one click.
+- The item list on the left follows the route, first world first, and every
+  item starts collapsed. Open one to see its worlds. **Show item list** hides
+  the whole list if you'd rather give the route the room.
 - Each item lists the worlds selling it. Type a quantity next to a world to
   change what you buy there, and the totals follow. The header then says the
   plan was edited by hand.
@@ -115,9 +122,10 @@ one out.
 
 It won't travel or buy for you. It plans, and you do the shopping.
 
-It doesn't knock what you already own off the bill. Building still prices the full
-quantity, whatever **On you** and **Retainers** say. Those columns are there for
-you to read. Untick anything you don't need to buy.
+It doesn't knock what you already own off the bill by itself. Building still prices
+the full quantity, whatever **On you** and **Retainers** say. Those columns are
+there for you to read. Press **Exclude items I have enough of**, or untick
+anything you don't need to buy.
 
 It can only see a retainer or the saddlebag while it's open. So it remembers
 what each held the last time you opened it, per character, and shows a dim
@@ -147,7 +155,8 @@ game's own Data Center Travel, which the plugin doesn't do for you.
 I haven't tried importing a Teamcraft link or an Artisan export back into the
 Import tab, so going the other way (Open in Teamcraft, Copy Artisan list) is
 the better-trodden direction. The same goes for the any-order search, the market
-board note, the Exclude crafted items checkbox, Check/uncheck all, removing goals, old lists still loading after an
+board note, the sortable column headers, the Exclude items I have enough of button,
+the collapsed item list, the Exclude crafted items checkbox, Check/uncheck all, removing goals, old lists still loading after an
 update, the stale-listing marker, the short-by and over-by notes, Reload list,
 closing windows with Esc or a gamepad, and updating the plugin. If any of those
 misbehaves, I'd like to hear about it.

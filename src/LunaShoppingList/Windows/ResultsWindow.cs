@@ -1,6 +1,7 @@
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
+using LunaShoppingList.Adapters;
 using LunaShoppingList.Core;
 
 namespace LunaShoppingList.Windows;
@@ -13,20 +14,41 @@ public sealed class ResultsWindow : Window
 
     private const string Footnote = "Prices are from Universalis, exclude market tax, and may be out of date. This plugin does not travel for you.";
     private const int TopWorlds = 8;
-    private const int OpenFirstItems = 5;
     private static readonly Vector4 Red = new(1f, 0.35f, 0.35f, 1f);
     private static readonly Vector4 Amber = new(1f, 0.75f, 0.2f, 1f);
 
     /// <summary>The display numbers of one world's offer, computed once per book.</summary>
-    private readonly record struct Row(string Units, string Price, string Cost, bool Partial, bool Stale);
+    private readonly record struct Row(string Units, string Price, string Cost, bool Partial, bool Stale, int UnitsN, int PriceN, long CostN, DateTimeOffset Reviewed);
+
+    /// <summary>
+    /// A table's displayed row order for one sort choice: positions into the table's natural rows. The natural rows, the
+    /// <see cref="AllocationState"/> and the <see cref="OfferBook"/> are never reordered; only this display list is.
+    /// </summary>
+    private sealed record SortedOrder(int Column, bool Ascending, RouteSummary? Summary, int[] Order);
 
     private readonly string key;
     private readonly IItemInfo items;
+    private readonly OwnedItemsService owned;
     private readonly Action<string> onClosed;
+
+    // The left pane lists items in the order the route visits them (first world first, then down each world's lines), so it reads the
+    // same as the route on the right. Items the plan buys nowhere come last, in the book's order. Rebuilt when the route changes, but
+    // never while a box is being edited, so an item does not jump away from under the cursor.
+    private IReadOnlyList<ItemOffers>? itemOrder;
+    private RouteSummary? itemOrderSummary;
+    private int itemOrderSignature;
     private readonly Dictionary<uint, string> names = new();
     private readonly Dictionary<uint, bool> openItems = new();
     private readonly HashSet<uint> showAll = new();
     private readonly HashSet<(uint, uint)> pinnedRows = new();
+
+    // Click-to-sort state, per window only (never saved). ImGui keeps each table's chosen column and direction; these remember the
+    // order built for it, one entry per item's offers table and one per world's route table. Each table sorts on its own.
+    // An order is rebuilt only when the sort choice changes, a new book arrives, a plan option is applied, or (route) the summary
+    // changes. A typed quantity does NOT rebuild it, so a row never jumps away from under the box being edited; the new order shows
+    // the next time one of those happens.
+    private readonly Dictionary<uint, SortedOrder> offerOrders = new();
+    private readonly Dictionary<uint, SortedOrder> routeOrders = new();
 
     private const int VisibleOptionRows = 8;
 
@@ -48,16 +70,19 @@ public sealed class ResultsWindow : Window
     private bool percentUnit = true;
     private PlanOption? applied;
     private bool planOpen = true;
+    // Per window, not saved: false hides the left item list so the route has the whole window.
+    private bool showItems = true;
 
     /// <summary>
     /// Creates the window. <paramref name="key"/> is the list's key (also used for the window id), <paramref name="onClosed"/> is called
     /// with it when the user closes the window.
     /// </summary>
-    internal ResultsWindow(string key, string title, OfferBook book, IReadOnlyList<PlanOption> options, IItemInfo items, Action<string> onClosed)
+    internal ResultsWindow(string key, string title, OfferBook book, IReadOnlyList<PlanOption> options, IItemInfo items, OwnedItemsService owned, Action<string> onClosed)
         : base(title + "###lsl-results-" + key)
     {
         this.key = key;
         this.items = items;
+        this.owned = owned;
         this.onClosed = onClosed;
         this.book = book;
         Size = new Vector2(900, 640);
@@ -114,6 +139,9 @@ public sealed class ResultsWindow : Window
         applied = c.Applied;
         state = c.State;
         rows = c.Rows;
+        offerOrders.Clear();
+        routeOrders.Clear();
+        itemOrder = null;
         if (planOptions.Count > 0)
             budget = Math.Min(budget, planOptions.Max(o => o.ExtraGil));
         sliderValue = Math.Min(BudgetToSlider(budget), SliderMax());
@@ -138,12 +166,10 @@ public sealed class ResultsWindow : Window
             var item = b.Items[i];
             present.Add(item.ItemId);
             var arr = new Row[item.Worlds.Count];
-            long total = 0;
             for (var j = 0; j < arr.Length; j++)
             {
                 var w = item.Worlds[j];
                 var units = w.UnitsForSale;
-                total += units;
                 var lo = w.MinUnitPrice;
                 var hi = w.MaxUnitPriceFor(item.Needed);
                 var cost = w.CostFor(item.Needed);
@@ -153,11 +179,15 @@ public sealed class ResultsWindow : Window
                     lo == hi || hi == 0 ? lo.ToString("N0") : $"{lo:N0}-{hi:N0}",
                     partial ? $"{cost:N0} (for {units:N0} of {item.Needed:N0})" : cost.ToString("N0"),
                     partial,
-                    now - w.OldestReviewFor(item.Needed) > StaleAfter);
+                    now - w.OldestReviewFor(item.Needed) > StaleAfter,
+                    units,
+                    lo,
+                    cost,
+                    w.OldestReviewFor(item.Needed));
             }
             map[item.ItemId] = arr;
             if (!openItems.ContainsKey(item.ItemId))
-                newOpen[item.ItemId] = i < OpenFirstItems || arr.Length == 0 || total < item.Needed;
+                newOpen[item.ItemId] = false; // every item starts collapsed; the header still says if the plan is short
         }
         return (map, newOpen, present);
     }
@@ -194,7 +224,83 @@ public sealed class ResultsWindow : Window
         applied = option;
         pinnedRows.Clear();
         state.Apply(option.Lines);
+        offerOrders.Clear();
         dirty = true;
+    }
+
+    /// <summary>The column and direction the user chose by clicking a header of the current table, or false while unsorted.</summary>
+    private static bool TryReadSort(out int column, out bool ascending)
+    {
+        column = 0;
+        ascending = true;
+        var specs = ImGui.TableGetSortSpecs();
+        if (specs.IsNull || specs.SpecsCount < 1)
+            return false;
+        var spec = specs.Specs;
+        column = spec.ColumnIndex;
+        ascending = spec.SortDirection == ImGuiSortDirection.Ascending;
+        specs.SpecsDirty = false;
+        return true;
+    }
+
+    /// <summary>Compares two worlds' rows of one item in the chosen offers column. Buy compares the quantity chosen right now.</summary>
+    private Comparison<int>? OfferComparison(ItemOffers item, Row[] itemRows, int column) => column switch
+    {
+        0 => (a, b) => TableSort.CompareText(item.Worlds[a].WorldName, item.Worlds[b].WorldName),
+        1 => (a, b) => itemRows[a].UnitsN.CompareTo(itemRows[b].UnitsN),
+        2 => (a, b) => itemRows[a].PriceN.CompareTo(itemRows[b].PriceN),
+        3 => (a, b) => itemRows[a].CostN.CompareTo(itemRows[b].CostN),
+        // Seen sorts by age: ascending is the most recently reviewed first.
+        4 => (a, b) => itemRows[b].Reviewed.CompareTo(itemRows[a].Reviewed),
+        5 => (a, b) => state.GetQuantity(item.ItemId, item.Worlds[a].WorldId).CompareTo(state.GetQuantity(item.ItemId, item.Worlds[b].WorldId)),
+        _ => null,
+    };
+
+    private static int[] BuildOrder(int count, Comparison<int>? comparison, bool ascending)
+    {
+        var natural = new int[count];
+        for (var i = 0; i < count; i++)
+            natural[i] = i;
+        return TableSort.Order(natural, comparison, ascending).ToArray();
+    }
+
+    /// <summary>The display order of one item's worlds (positions into item.Worlds), or null for the natural order.</summary>
+    private int[]? OfferDisplayOrder(ItemOffers item, Row[] itemRows)
+    {
+        if (!TryReadSort(out var column, out var ascending))
+            return null;
+        if (offerOrders.TryGetValue(item.ItemId, out var cached) && cached.Column == column && cached.Ascending == ascending
+            && cached.Order.Length == item.Worlds.Count)
+            return cached.Order;
+        var order = BuildOrder(item.Worlds.Count, OfferComparison(item, itemRows, column), ascending);
+        offerOrders[item.ItemId] = new SortedOrder(column, ascending, null, order);
+        return order;
+    }
+
+    /// <summary>The display order of one world's route lines (positions into w.Lines), or null for the natural order.</summary>
+    private int[]? RouteDisplayOrder(RouteSummary s, WorldRoute w)
+    {
+        if (!TryReadSort(out var column, out var ascending))
+        {
+            // Unsorted again: forget the old order so the left pane goes back to the natural one with it.
+            routeOrders.Remove(w.WorldId);
+            return null;
+        }
+        if (routeOrders.TryGetValue(w.WorldId, out var cached) && cached.Column == column && cached.Ascending == ascending
+            && ReferenceEquals(cached.Summary, s) && cached.Order.Length == w.Lines.Count)
+            return cached.Order;
+        var lines = w.Lines;
+        Comparison<int>? comparison = column switch
+        {
+            0 => (a, b) => TableSort.CompareText(Name(lines[a].ItemId), Name(lines[b].ItemId)),
+            1 => (a, b) => lines[a].Quantity.CompareTo(lines[b].Quantity),
+            2 => (a, b) => lines[a].MinUnitPrice.CompareTo(lines[b].MinUnitPrice),
+            3 => (a, b) => lines[a].Cost.CompareTo(lines[b].Cost),
+            _ => null,
+        };
+        var order = BuildOrder(lines.Count, comparison, ascending);
+        routeOrders[w.WorldId] = new SortedOrder(column, ascending, s, order);
+        return order;
     }
 
     private long CheapestTotal => planOptions.Count > 0 ? planOptions[0].Total : 0;
@@ -235,17 +341,20 @@ public sealed class ResultsWindow : Window
         var height = Math.Max(avail.Y, ImGui.GetTextLineHeightWithSpacing() * 8);
         var leftWidth = Math.Max(avail.X * 0.62f, 200f);
 
-        try
+        if (showItems)
         {
-            if (ImGui.BeginChild("##items", new Vector2(leftWidth, height), true))
-                DrawItems();
-        }
-        finally
-        {
-            ImGui.EndChild();
-        }
+            try
+            {
+                if (ImGui.BeginChild("##items", new Vector2(leftWidth, height), true))
+                    DrawItems();
+            }
+            finally
+            {
+                ImGui.EndChild();
+            }
 
-        ImGui.SameLine();
+            ImGui.SameLine();
+        }
 
         try
         {
@@ -275,6 +384,10 @@ public sealed class ResultsWindow : Window
             ImGui.SameLine();
             ImGui.TextColored(Red, $"{s.Unmet.Count} items not fully covered");
         }
+        ImGui.SameLine();
+        ImGui.Checkbox("Show item list", ref showItems);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Untick to hide the per-item prices and show only the route.");
     }
 
     private void DrawTradeOff()
@@ -434,9 +547,47 @@ public sealed class ResultsWindow : Window
         }
     }
 
+    /// <summary>The items in route order; see <see cref="itemOrder"/>.</summary>
+    private IReadOnlyList<ItemOffers> ItemsInRouteOrder()
+    {
+        var s = CurrentSummary();
+        // The route tables may be sorted by the user; the left pane follows what the right shows. Each route table's chosen order is
+        // remembered by RouteDisplayOrder when that table draws, so the signature of those orders tells when the right side changed.
+        var signature = 0;
+        foreach (var o in routeOrders.Values)
+            signature = HashCode.Combine(signature, o.Column, o.Ascending, System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(o.Order));
+        if (itemOrder != null && ((ReferenceEquals(itemOrderSummary, s) && signature == itemOrderSignature) || ImGui.IsAnyItemActive()))
+            return itemOrder;
+
+        var byId = new Dictionary<uint, ItemOffers>();
+        foreach (var it in book.Items)
+            byId.TryAdd(it.ItemId, it);
+
+        var ordered = new List<ItemOffers>(book.Items.Count);
+        var seen = new HashSet<uint>();
+        foreach (var w in s.Worlds)
+        {
+            var shown = routeOrders.TryGetValue(w.WorldId, out var ro) && ReferenceEquals(ro.Summary, s) && ro.Order.Length == w.Lines.Count ? ro.Order : null;
+            for (var k = 0; k < w.Lines.Count; k++)
+            {
+                var l = w.Lines[shown == null ? k : shown[k]];
+                if (byId.TryGetValue(l.ItemId, out var it) && seen.Add(l.ItemId))
+                    ordered.Add(it);
+            }
+        }
+        foreach (var it in book.Items)
+            if (seen.Add(it.ItemId))
+                ordered.Add(it);
+
+        itemOrder = ordered;
+        itemOrderSummary = s;
+        itemOrderSignature = signature;
+        return ordered;
+    }
+
     private void DrawItems()
     {
-        foreach (var item in book.Items)
+        foreach (var item in ItemsInRouteOrder())
         {
             ImGui.PushID((int)item.ItemId);
             try
@@ -481,11 +632,16 @@ public sealed class ResultsWindow : Window
     {
         var allocated = state.Allocated(item.ItemId);
         var unmet = state.Unmet(item.ItemId);
-        var status = unmet > 0
-            ? $" - bought {allocated:N0} of {item.Needed:N0}, short by {unmet:N0}"
+        // "have" is live: what is on you now (bags, crystals, saddlebag), so it moves up as things are bought. "plan buys" is what
+        // the current plan would purchase, which is not a purchase until it shows up as "have".
+        var have = ListWindow.OnYouTotal(owned.Summarize(item.ItemId));
+        var haveText = have is long h ? h.ToString("N0") : "-";
+        var plan = unmet > 0
+            ? $" - plan buys {allocated:N0}, short by {unmet:N0}"
             : allocated > item.Needed
-                ? $" - bought {allocated:N0} of {item.Needed:N0}, over by {allocated - item.Needed:N0}"
-                : $" - bought {allocated:N0} of {item.Needed:N0}";
+                ? $" - plan buys {allocated:N0}, over by {allocated - item.Needed:N0}"
+                : $" - plan buys {allocated:N0}";
+        var status = $" - have {haveText} of {item.Needed:N0}{plan}";
 
         ImGui.SetNextItemOpen(openItems.TryGetValue(item.ItemId, out var wasOpen) && wasOpen);
         var open = ImGui.CollapsingHeader($"{Name(item.ItemId)} - need {item.Needed:N0}{status}###item{item.ItemId}");
@@ -511,22 +667,27 @@ public sealed class ResultsWindow : Window
         }
 
         var itemRows = rows[item.ItemId];
-        var tableOpen = ImGui.BeginTable("##offers", 6, ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp);
+        var tableOpen = ImGui.BeginTable("##offers", 6, ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.Sortable | ImGuiTableFlags.SortTristate);
         try
         {
             if (!tableOpen)
                 return;
 
+            // Fixed columns are as wide as their header and their widest text, so a price range such as
+            // "15,150-17,000" is never cut off or run into the next column.
             ImGui.TableSetupColumn("World");
-            ImGui.TableSetupColumn("For sale", ImGuiTableColumnFlags.WidthFixed, 65);
-            ImGui.TableSetupColumn("Unit price", ImGuiTableColumnFlags.WidthFixed, 90);
-            ImGui.TableSetupColumn("Cost", ImGuiTableColumnFlags.WidthFixed, 170);
-            ImGui.TableSetupColumn("Seen", ImGuiTableColumnFlags.WidthFixed, 50);
+            ImGui.TableSetupColumn("For sale", ImGuiTableColumnFlags.WidthFixed, FitWidth("For sale", itemRows.Select(x => x.Units)));
+            ImGui.TableSetupColumn("Unit price", ImGuiTableColumnFlags.WidthFixed, FitWidth("Unit price", itemRows.Select(x => x.Price)));
+            ImGui.TableSetupColumn("Cost", ImGuiTableColumnFlags.WidthFixed, FitWidth("Cost", itemRows.Select(x => x.Cost)));
+            ImGui.TableSetupColumn("Seen", ImGuiTableColumnFlags.WidthFixed, FitWidth("Seen", new[] { "stale" }));
             ImGui.TableSetupColumn("Buy", ImGuiTableColumnFlags.WidthFixed, 130);
             ImGui.TableHeadersRow();
 
-            for (var i = 0; i < item.Worlds.Count; i++)
+            // Display order only. Everything below looks the world up by item id and world id, never by displayed position.
+            var order = OfferDisplayOrder(item, itemRows);
+            for (var k = 0; k < item.Worlds.Count; k++)
             {
+                var i = order == null ? k : order[k];
                 var w = item.Worlds[i];
                 var qty = state.GetQuantity(item.ItemId, w.WorldId);
                 if (qty > 0)
@@ -577,6 +738,21 @@ public sealed class ResultsWindow : Window
         }
     }
 
+    private static string RoutePriceText(RouteLine l)
+        => l.MinUnitPrice == l.MaxUnitPrice ? l.MinUnitPrice.ToString("N0") : $"{l.MinUnitPrice:N0}-{l.MaxUnitPrice:N0}";
+
+    /// <summary>
+    /// A fixed column width that fits its header (with room for the sort arrow) and the widest of its texts, plus cell padding.
+    /// These tables are not resizable, so the width is applied again every frame and follows the data.
+    /// </summary>
+    private static float FitWidth(string header, IEnumerable<string> texts)
+    {
+        var widest = ImGui.CalcTextSize(header).X + ImGui.GetFontSize();
+        foreach (var t in texts)
+            widest = Math.Max(widest, ImGui.CalcTextSize(t).X);
+        return widest + ImGui.GetStyle().CellPadding.X * 2;
+    }
+
     private void DrawRoute()
     {
         var s = CurrentSummary();
@@ -587,18 +763,26 @@ public sealed class ResultsWindow : Window
         {
             if (!ImGui.CollapsingHeader($"{w.WorldName} - {w.Lines.Count} items - {w.Total:N0} gil###route{w.WorldId}", ImGuiTreeNodeFlags.DefaultOpen))
                 continue;
-            var routeOpen = ImGui.BeginTable($"##route{w.WorldId}", 4, ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp);
+            // The columns can be dragged by their borders. They start as wide as their longest text, and a resizable table keeps
+            // its first widths, so the widths are part of the table id: when the data needs different widths the table starts over.
+            var qtyWidth = FitWidth("Qty", w.Lines.Select(l => l.Quantity.ToString("N0")));
+            var priceWidth = FitWidth("Price", w.Lines.Select(RoutePriceText));
+            var costWidth = FitWidth("Cost", w.Lines.Select(l => l.Cost.ToString("N0")));
+            var routeOpen = ImGui.BeginTable($"##route{w.WorldId}_{(int)qtyWidth}_{(int)priceWidth}_{(int)costWidth}", 4,
+                ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.Sortable | ImGuiTableFlags.SortTristate);
             try
             {
                 if (!routeOpen)
                     continue;
                 ImGui.TableSetupColumn("Item");
-                ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed, 45);
-                ImGui.TableSetupColumn("Price", ImGuiTableColumnFlags.WidthFixed, 85);
-                ImGui.TableSetupColumn("Cost", ImGuiTableColumnFlags.WidthFixed, 80);
+                ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed, qtyWidth);
+                ImGui.TableSetupColumn("Price", ImGuiTableColumnFlags.WidthFixed, priceWidth);
+                ImGui.TableSetupColumn("Cost", ImGuiTableColumnFlags.WidthFixed, costWidth);
                 ImGui.TableHeadersRow();
-                foreach (var l in w.Lines)
+                var order = RouteDisplayOrder(s, w);
+                for (var k = 0; k < w.Lines.Count; k++)
                 {
+                    var l = w.Lines[order == null ? k : order[k]];
                     ImGui.TableNextRow();
                     ImGui.TableNextColumn();
                     var itemName = Name(l.ItemId);
@@ -610,7 +794,7 @@ public sealed class ResultsWindow : Window
                     ImGui.TableNextColumn();
                     ImGui.TextUnformatted(l.Quantity.ToString("N0"));
                     ImGui.TableNextColumn();
-                    ImGui.TextUnformatted(l.MinUnitPrice == l.MaxUnitPrice ? l.MinUnitPrice.ToString("N0") : $"{l.MinUnitPrice:N0}-{l.MaxUnitPrice:N0}");
+                    ImGui.TextUnformatted(RoutePriceText(l));
                     ImGui.TableNextColumn();
                     ImGui.TextUnformatted(l.Cost.ToString("N0"));
                 }

@@ -63,6 +63,24 @@ public sealed class ListWindow : Window, IDisposable
     // Vendor column text per item, kept once the vendor index is ready so the rows are not rebuilt every frame.
     private readonly Dictionary<uint, string> vendorText = new();
 
+    // The Vendor column is sized to its widest text so nothing is cut off. The wanted width is measured once per set of
+    // rows, vendor index state and font (not every frame).
+    private float vendorWantedWidth = -1f;
+    private float vendorWantedFontKey;
+    private bool vendorWantedReady;
+
+    // Click-to-sort state. Per window only: not saved, gone when the window closes. Sorting changes display order only;
+    // session.Requirements and rows are never reordered. Column -1 means no sort, which shows the natural order of rows.
+    private const int BuyColumn = 0, ItemColumn = 1, QuantityColumn = 2, OnYouColumn = 3, RetainersColumn = 4, VendorColumn = 5;
+    private const long OwnedRefreshMs = 1000;
+    private int sortColumn = -1;
+    private bool sortAscending = true;
+    // The rows in display order; null when it must be rebuilt. Rebuilt only when the sort, the rows or the vendor index changed
+    // (and about once a second while sorted by a count column, whose numbers move with the inventory).
+    private IReadOnlyList<Requirement>? displayRows;
+    private bool displayVendorsReady;
+    private long displayBuiltAtMs;
+
     // Shared with the background build task. Writes happen under buildGate; a build publishes its
     // result only while its generation is still current, so a superseded build can never show it.
     private readonly object buildGate = new();
@@ -341,6 +359,8 @@ public sealed class ListWindow : Window, IDisposable
         rows = session.Requirements.OrderBy(r => items.IsCrystalLike(r.ItemId)).ThenBy(r => r.ItemId).ToList();
         names.Clear();
         vendorText.Clear();
+        vendorWantedWidth = -1f;
+        displayRows = null;
         CancelBuild();
         RetireCurrent();
         lock (buildGate)
@@ -449,6 +469,14 @@ public sealed class ListWindow : Window, IDisposable
         }
         ImGui.SameLine();
         ImGui.TextDisabled(session.AreAllCrystalsExcluded ? "(all excluded)" : "(not all excluded)");
+        ImGui.SameLine();
+        if (ImGui.Button("Exclude items I have enough of"))
+        {
+            session.ExcludeOwned(OwnedEverywhere);
+            PersistExclusions();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Unticks every ingredient where what you hold (bags, saddlebag, retainers) already covers the quantity needed.\nRetainer counts are as of your last visit to each retainer. Items you have not got enough of stay as they are.");
 
         // The table follows the window: it takes what is left after keeping room for the Build row,
         // its status and error lines, the login warning and the footnote.
@@ -457,23 +485,27 @@ public sealed class ListWindow : Window, IDisposable
         var reserved = ImGui.GetFrameHeightWithSpacing() + rowHeight * (showRetainerNote ? 6 : 5) + ImGui.GetStyle().ItemSpacing.Y * 4;
         var free = ImGui.GetContentRegionAvail().Y - reserved;
         var tableHeight = Math.Max(rowHeight * 7, free);
-        if (ImGui.BeginTable("##ingredients", 6, ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersInnerV, new Vector2(-1, tableHeight)))
+        var padding = ImGui.GetStyle().CellPadding.X * 2;
+        var vendorWidth = VendorWantedWidth(padding, ImGui.GetContentRegionAvail().X);
+        // A resizable table keeps the widths from its first frame and no public call sets one later, so the wanted Vendor
+        // width is part of the table id: when it changes the table starts over at the new width (and without a saved sort).
+        if (ImGui.BeginTable($"##ingredients{(int)vendorWidth}", 6,ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Sortable | ImGuiTableFlags.SortTristate, new Vector2(-1, tableHeight)))
         {
             try
             {
                 ImGui.TableSetupScrollFreeze(0, 1);
                 // Item takes the leftover width; the fixed columns can be dragged wider or narrower by their borders.
                 // Their starting widths come from the current font, so they follow the font and UI scale.
-                var padding = ImGui.GetStyle().CellPadding.X * 2;
                 ImGui.TableSetupColumn("Buy", ImGuiTableColumnFlags.WidthFixed | ImGuiTableColumnFlags.NoResize,
                     Math.Max(ImGui.CalcTextSize("Buy").X, ImGui.GetFrameHeight()) + padding);
                 ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch, 1f);
                 ImGui.TableSetupColumn("Quantity", ImGuiTableColumnFlags.WidthFixed, CountColumnWidth("Quantity", padding));
                 ImGui.TableSetupColumn("On you", ImGuiTableColumnFlags.WidthFixed, CountColumnWidth("On you", padding));
                 ImGui.TableSetupColumn("Retainers", ImGuiTableColumnFlags.WidthFixed, CountColumnWidth("Retainers", padding));
-                ImGui.TableSetupColumn("Vendor", ImGuiTableColumnFlags.WidthFixed, VendorColumnWidth(padding));
+                ImGui.TableSetupColumn("Vendor", ImGuiTableColumnFlags.WidthFixed, vendorWidth);
                 ImGui.TableHeadersRow();
-                foreach (var r in rows)
+                // Every widget below is keyed by r.ItemId, never by position, so display order does not matter to it.
+                foreach (var r in SortedRows())
                 {
                     ImGui.TableNextRow();
                     ImGui.TableNextColumn();
@@ -513,6 +545,88 @@ public sealed class ListWindow : Window, IDisposable
             ImGui.TextDisabled(NoRetainerDataText);
     }
 
+    /// <summary>
+    /// The rows in the order the table shows them. Reads the table's sort spec (call between TableHeadersRow and the first row);
+    /// the ordered list is cached and rebuilt only when the spec, the rows or the vendor index changed.
+    /// </summary>
+    private IReadOnlyList<Requirement> SortedRows()
+    {
+        var specs = ImGui.TableGetSortSpecs();
+        if (specs.SpecsDirty)
+        {
+            if (specs.SpecsCount > 0)
+            {
+                var spec = specs.Specs[0];
+                sortColumn = spec.ColumnIndex;
+                sortAscending = spec.SortDirection != ImGuiSortDirection.Descending;
+            }
+            else
+            {
+                sortColumn = -1;
+            }
+            displayRows = null;
+            specs.SpecsDirty = false;
+        }
+
+        var now = Environment.TickCount64;
+        var countColumn = sortColumn is OnYouColumn or RetainersColumn;
+        if (displayRows != null && sortColumn == VendorColumn && sources.IsReady != displayVendorsReady)
+            displayRows = null;
+        if (displayRows != null && countColumn && now - displayBuiltAtMs >= OwnedRefreshMs)
+            displayRows = null;
+        if (displayRows != null)
+            return displayRows;
+
+        displayBuiltAtMs = now;
+        displayVendorsReady = sources.IsReady;
+        displayRows = TableSort.Order(rows, BuildComparison(), sortAscending);
+        return displayRows;
+    }
+
+    /// <summary>Sort keys by item id. A repeated id keeps its first key instead of throwing on the draw thread.</summary>
+    private static Dictionary<uint, T> KeysById<T>(IEnumerable<Requirement> source, Func<Requirement, T> key)
+    {
+        var map = new Dictionary<uint, T>();
+        foreach (var r in source)
+            map.TryAdd(r.ItemId, key(r));
+        return map;
+    }
+
+    /// <summary>The comparison for the sorted column, with its sort keys read once per sort rather than once per comparison; null for no sort.</summary>
+    private Comparison<Requirement>? BuildComparison()
+    {
+        switch (sortColumn)
+        {
+            case BuyColumn:
+                // Ticked rows first when ascending. Taken when the sort is made: ticking a row afterwards does not move it.
+                var ticked = KeysById(rows, r => session.IsIncluded(r.ItemId) ? 0 : 1);
+                return (a, b) => ticked[a.ItemId].CompareTo(ticked[b.ItemId]);
+            case ItemColumn:
+                return (a, b) => TableSort.CompareText(Name(a.ItemId), Name(b.ItemId));
+            case QuantityColumn:
+                return (a, b) => a.Quantity.CompareTo(b.Quantity);
+            case OnYouColumn:
+            {
+                // Unknown ('-') sorts lowest.
+                var keys = KeysById(rows, r => OnYouTotal(owned.Summarize(r.ItemId)) ?? long.MinValue);
+                return (a, b) => keys[a.ItemId].CompareTo(keys[b.ItemId]);
+            }
+            case RetainersColumn:
+            {
+                var keys = KeysById(rows, r => owned.Summarize(r.ItemId).Retainers ?? long.MinValue);
+                return (a, b) => keys[a.ItemId].CompareTo(keys[b.ItemId]);
+            }
+            case VendorColumn:
+            {
+                // While the vendor index is not ready every row has no sources, so the order stays as it was.
+                var keys = KeysById(rows, r => sources.IsReady ? sources.For(r.ItemId) : []);
+                return (a, b) => ItemSourceOrder.Compare(keys[a.ItemId], keys[b.ItemId]);
+            }
+            default:
+                return null;
+        }
+    }
+
     /// <summary>A count column wide enough for its header and for a six-digit count, at the current font size.</summary>
     private static float CountColumnWidth(string header, float padding)
         => Math.Max(ImGui.CalcTextSize(header).X, ImGui.CalcTextSize("999,999").X) + padding;
@@ -521,8 +635,49 @@ public sealed class ListWindow : Window, IDisposable
     private static float VendorColumnWidth(float padding)
         => Math.Max(ImGui.CalcTextSize("Vendor").X, Math.Max(ImGui.CalcTextSize("1,200 gil +2").X, ImGui.CalcTextSize("120 Bicolor Gemstone").X * 0.9f)) + padding;
 
+    /// <summary>
+    /// The Vendor column width: the widest vendor text on the list plus padding, never less than <see cref="VendorColumnWidth"/>,
+    /// and never more than about 60% of the table so Item keeps room. Measured only when the rows, the vendor index state or the
+    /// font changed.
+    /// </summary>
+    private float VendorWantedWidth(float padding, float tableWidth)
+    {
+        var minimum = VendorColumnWidth(padding);
+        var fontKey = ImGui.CalcTextSize("Vendor").X;
+        if (vendorWantedWidth < 0f || vendorWantedReady != sources.IsReady || Math.Abs(fontKey - vendorWantedFontKey) > 0.01f)
+        {
+            var widest = 0f;
+            foreach (var r in rows)
+                widest = Math.Max(widest, ImGui.CalcTextSize(VendorText(r.ItemId)).X);
+            vendorWantedWidth = Math.Max(minimum, widest + padding);
+            vendorWantedReady = sources.IsReady;
+            vendorWantedFontKey = fontKey;
+        }
+        return Math.Min(vendorWantedWidth, Math.Max(minimum, tableWidth * 0.6f));
+    }
+
+    /// <summary>The Vendor column text for an item, cached once the vendor index is ready.</summary>
+    private string VendorText(uint itemId)
+    {
+        if (!vendorText.TryGetValue(itemId, out var text))
+        {
+            text = ItemSourceSummary.ColumnText(sources, itemId);
+            if (sources.IsReady)
+                vendorText[itemId] = text;
+        }
+        return text;
+    }
+
     /// <summary>Bags, crystals and saddlebag; <c>null</c> until the bags have been read for this character.</summary>
-    private static long? OnYouTotal(OwnedSummary s) => s.OnYou is int now ? (long)now + (s.Saddlebag ?? 0) : null;
+    internal static long? OnYouTotal(OwnedSummary s) => s.OnYou is int now ? (long)now + (s.Saddlebag ?? 0) : null;
+
+    /// <summary>Bags, saddlebag and retainers together; <c>null</c> when neither the bags nor any retainer has been read.</summary>
+    private long? OwnedEverywhere(uint itemId)
+    {
+        var s = owned.Summarize(itemId);
+        var onYou = OnYouTotal(s);
+        return onYou is null && s.Retainers is null ? null : (onYou ?? 0) + (s.Retainers ?? 0);
+    }
 
     private static void DrawOnYou(OwnedSummary s, int needed)
     {
@@ -605,12 +760,7 @@ public sealed class ListWindow : Window, IDisposable
 
     private void DrawVendor(uint itemId)
     {
-        if (!vendorText.TryGetValue(itemId, out var text))
-        {
-            text = ItemSourceSummary.ColumnText(sources, itemId);
-            if (sources.IsReady)
-                vendorText[itemId] = text;
-        }
+        var text = VendorText(itemId);
         var hasSources = text != ItemSourceSummary.NoneText && text != ItemSourceSummary.NotReadyText;
         if (hasSources)
         {

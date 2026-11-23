@@ -135,7 +135,7 @@ internal sealed class WindowManager : IWindowHost, IDisposable
             existing.BringToFront();
             return;
         }
-        var window = new ResultsWindow(key, title + ResultsTitleSuffix, book, options, items, OnResultsClosed);
+        var window = new ResultsWindow(key, title + ResultsTitleSuffix, book, options, items, owned, OnResultsClosed);
         resultsWindows[key] = window;
         window.IsOpen = true;
         pending.Enqueue(() => WindowSystem.AddWindow(window));
