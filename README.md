@@ -105,7 +105,9 @@ one out.
   and its storeroom, and hovering it lists each house. The **Vendor** column shows when an NPC also
   sells the item. Hover it for the vendor and where they stand. An item nothing
   sells shows **Craftable** there, and one that has a vendor and can also be
-  crafted adds (craftable) after the vendor text. Columns start
+  crafted adds (craftable) after the vendor text. If the item is also a monster
+  drop it says so, such as **Craftable, monster drop**, and hovering it points
+  you to the Monster Loot Hunter plugin to find which monsters. Columns start
   as wide as their longest text, and you can drag a border to change that.
 - **Reload list** reads the list again. Use it if you changed the list somewhere
   else, or if the window says recipe data is still loading.
@@ -128,7 +130,8 @@ one out.
   it's copied, so you can paste it into the market board search.
 - Click a world name, in the route or in an expanded item, to ask Lifestream to
   take you there. It only asks when you click. The note under the Route title
-  says Lifestream was asked, and Lifestream shows its own message if it can't go.
+  reads "Requesting travel to the world via Lifestream", and Lifestream shows
+  its own message if it can't go.
 - Press Build shopping list again in the list window and the prices refresh. Your quantity
   changes are reset, but the budget stays.
 
@@ -145,6 +148,11 @@ It doesn't knock what you already own off the bill by itself. Building still pri
 the full quantity, whatever **On you** and **Retainers** say. Those columns are
 there for you to read. Press **Exclude items I have enough of**, or untick
 anything you don't need to buy.
+
+It only knows about a small list of monster drops, about 237 items, so many
+real drops show nothing in the Vendor column. A blank there doesn't mean the
+item isn't a drop. The game's own data has no drop information, which is why
+the list comes from Teamcraft.
 
 It can only see a retainer or the saddlebag while it's open. So it remembers
 what each held the last time you opened it, per character, and shows a dim
@@ -178,7 +186,7 @@ board note, the sortable column headers, the Exclude items I have enough of butt
 the collapsed item list, the Exclude crafted items checkbox, Check/uncheck all, removing goals, old lists still loading after an
 update, the stale-listing marker, the short-by and over-by notes, Reload list,
 closing windows with Esc or a gamepad, and updating the plugin. The newest
-ones are the House column, Exclude items in my house, clicking a world name to
+ones are the monster drop label and the download behind it, the House column, Exclude items in my house, clicking a world name to
 ask Lifestream (including whether it collapses an open item), and the buttons
 wrapping in a narrow window. If any of those
 misbehaves, I'd like to hear about it.
@@ -201,7 +209,11 @@ shown.
 - The Artisan plugin loaded, to pick a crafting list.
 - Lifestream, only if you want world names to be clickable. Everything else
   works without it.
-- An internet connection, because the prices come from Universalis.
+- An internet connection. Prices come from Universalis. When the plugin starts
+  it also downloads a list of monster drops from Teamcraft's public repository
+  on GitHub. The drop list request sends nothing about you. If it
+  can't be fetched after 3 tries, you just get no drop labels that
+  session.
 
 ## Licence and credits
 
@@ -210,6 +222,9 @@ version 3, which you'll find in the `LICENSE` file. Copyright 2026 LunaBelleElit
 
 Prices come from [Universalis](https://universalis.app), a community-run market
 board service. Thanks to the people who keep it running.
+
+The monster drop list comes from Teamcraft's open
+repository. Thanks to its authors for sharing it.
 
 Teamcraft and Artisan are separate projects, and this isn't affiliated with either.
 It isn't affiliated with or endorsed by Square Enix. Final Fantasy is a

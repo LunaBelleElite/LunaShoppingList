@@ -22,7 +22,7 @@ public static class LifestreamNote
         LifestreamOutcome.NotAvailable => "Lifestream is not installed or not loaded.",
         LifestreamOutcome.Busy => "Lifestream is busy.",
         LifestreamOutcome.Refused => $"Lifestream can't go to {world} right now (busy, or the world is not reachable from here).",
-        LifestreamOutcome.Requested => $"Asked Lifestream to go to {world}. Lifestream shows its own messages if it can't.",
+        LifestreamOutcome.Requested => $"Requesting travel to {world} via Lifestream.",
         _ => string.Empty,
     };
 }

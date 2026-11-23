@@ -32,6 +32,7 @@ public sealed class Plugin : IDalamudPlugin
     internal LuminaRecipeData RecipeData { get; }
     internal LuminaItemInfo ItemInfo { get; }
     internal LuminaItemSources ItemSources { get; }
+    internal DropSourceIndex DropSources { get; }
     internal DalamudWorldData WorldData { get; }
     internal ArtisanListSource ArtisanLists { get; }
     internal HttpClientGetter HttpGetter { get; }
@@ -50,6 +51,8 @@ public sealed class Plugin : IDalamudPlugin
         ItemInfo.WarmUp();
         ItemSources = new LuminaItemSources(DataManager, Log);
         ItemSources.WarmUp();
+        DropSources = HttpDropSources.Create(Log);
+        DropSources.WarmUp();
         WorldData = new DalamudWorldData(PlayerState, DataManager);
         ArtisanLists = new ArtisanListSource(PluginInterface, Log);
         HttpGetter = new HttpClientGetter();
@@ -61,7 +64,7 @@ public sealed class Plugin : IDalamudPlugin
         diagnosticDump = new DiagnosticDump(DataManager, PlayerState, Log, ChatGui, ArtisanLists, ItemInfo);
 
         Windows = new WindowManager(WindowSystem, Configuration, ArtisanLists, ItemInfo, RecipeData, WorldData, ShoppingService,
-            new MaterialsCalculator(RecipeData), OwnedItems, Lifestream, ItemSources, Log);
+            new MaterialsCalculator(RecipeData), OwnedItems, Lifestream, ItemSources, DropSources, Log);
         Browser = new ListBrowserWindow(Configuration, ArtisanLists, ItemInfo, ItemInfo, RecipeData, RecipeData, Windows, Log);
         WindowSystem.AddWindow(Browser);
 
@@ -86,6 +89,8 @@ public sealed class Plugin : IDalamudPlugin
         });
         // Stops a vendor index build still running and silences its log.
         Step("dispose item sources", ItemSources.Dispose);
+        // Stops a monster-drop download still running and silences its log.
+        Step("dispose drop sources", DropSources.Dispose);
         // Cancels every running build and waits briefly for it, so they are done with the HTTP client first.
         Step("dispose windows", Windows.Dispose);
         Step("remove windows", WindowSystem.RemoveAllWindows);

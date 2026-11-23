@@ -23,6 +23,7 @@ internal sealed class WindowManager : IWindowHost, IDisposable
     private readonly OwnedItemsService owned;
     private readonly LifestreamService lifestream;
     private readonly IItemSources sources;
+    private readonly IDropSources drops;
     private readonly IPluginLog log;
 
     private readonly Dictionary<string, ListWindow> listWindows = new();
@@ -35,7 +36,7 @@ internal sealed class WindowManager : IWindowHost, IDisposable
     private int pasteCounter;
 
     public WindowManager(WindowSystem windowSystem, Configuration config, IArtisanListSource artisan, IItemInfo items,
-        IRecipeLookup recipes, IWorldData worlds, ShoppingListService service, MaterialsCalculator calc, OwnedItemsService owned, LifestreamService lifestream, IItemSources sources, IPluginLog log)
+        IRecipeLookup recipes, IWorldData worlds, ShoppingListService service, MaterialsCalculator calc, OwnedItemsService owned, LifestreamService lifestream, IItemSources sources, IDropSources drops, IPluginLog log)
     {
         WindowSystem = windowSystem;
         this.config = config;
@@ -48,6 +49,7 @@ internal sealed class WindowManager : IWindowHost, IDisposable
         this.owned = owned;
         this.lifestream = lifestream;
         this.sources = sources;
+        this.drops = drops;
         this.log = log;
     }
 
@@ -121,7 +123,7 @@ internal sealed class WindowManager : IWindowHost, IDisposable
     private void AddList(string key, string title, int? artisanListId, IReadOnlyList<Requirement>? requirements, string? customListId)
     {
         var session = new ShoppingSession(calc, items);
-        var window = new ListWindow(key, title, artisanListId, requirements, customListId, config, session, artisan, items, recipes, worlds, service, owned, sources, this, log);
+        var window = new ListWindow(key, title, artisanListId, requirements, customListId, config, session, artisan, items, recipes, worlds, service, owned, sources, drops, this, log);
         listWindows[key] = window;
         window.IsOpen = true;
         pending.Enqueue(() => WindowSystem.AddWindow(window));

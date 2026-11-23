@@ -43,6 +43,7 @@ public sealed class ListWindow : Window, IDisposable
     private readonly ShoppingListService service;
     private readonly OwnedItemsService owned;
     private readonly IItemSources sources;
+    private readonly IDropSources drops;
     private readonly IWindowHost host;
     private readonly IPluginLog log;
 
@@ -121,6 +122,7 @@ public sealed class ListWindow : Window, IDisposable
         ShoppingListService service,
         OwnedItemsService owned,
         IItemSources sources,
+        IDropSources drops,
         IWindowHost host,
         IPluginLog log)
         : base(title + "###lsl-list-" + key)
@@ -142,6 +144,7 @@ public sealed class ListWindow : Window, IDisposable
         this.service = service;
         this.owned = owned;
         this.sources = sources;
+        this.drops = drops;
         this.host = host;
         this.log = log;
         Size = new Vector2(520, 560);
@@ -680,8 +683,12 @@ public sealed class ListWindow : Window, IDisposable
     /// <summary>The vendors alone, cached once the vendor index is ready.</summary>
     private string RawVendorText(uint itemId) => ItemSourceSummary.ColumnText(sources, itemId);
 
-    /// <summary>True once the vendor index and the recipe index are both built (or the recipe index failed, so it will not change).</summary>
-    private bool VendorInfoReady => sources.IsReady && (recipes is not LuminaRecipeData d || d.IsResultIndexReady || d.IsResultIndexFailed);
+    /// <summary>
+    /// True once the vendor index, the monster-drop list and the recipe index are all built (or the drop list or recipe index
+    /// failed, so it will not change).
+    /// </summary>
+    private bool VendorInfoReady => sources.IsReady && (drops.IsReady || drops.HasFailed)
+        && (recipes is not LuminaRecipeData d || d.IsResultIndexReady || d.IsResultIndexFailed);
 
     private bool IsCraftable(uint itemId)
     {
@@ -698,7 +705,7 @@ public sealed class ListWindow : Window, IDisposable
     {
         if (!vendorText.TryGetValue(itemId, out var text))
         {
-            text = ItemSourceSummary.WithCraftable(RawVendorText(itemId), IsCraftable(itemId));
+            text = ItemSourceSummary.WithDrop(ItemSourceSummary.WithCraftable(RawVendorText(itemId), IsCraftable(itemId)), drops.IsDrop(itemId));
             if (VendorInfoReady)
                 vendorText[itemId] = text;
         }
@@ -877,8 +884,9 @@ public sealed class ListWindow : Window, IDisposable
         var text = VendorText(itemId);
         var raw = RawVendorText(itemId);
         var hasSources = raw != ItemSourceSummary.NoneText && raw != ItemSourceSummary.NotReadyText;
-        var craftable = text != raw;
-        if (hasSources || craftable)
+        var craftable = IsCraftable(itemId);
+        var isDrop = drops.IsDrop(itemId);
+        if (hasSources || craftable || isDrop)
         {
             // The normal text colour, softened, so real sources read as calm secondary information in light and dark themes.
             var calm = ImGui.GetStyle().Colors[(int)ImGuiCol.Text];
@@ -891,7 +899,7 @@ public sealed class ListWindow : Window, IDisposable
         }
         if (!ImGui.IsItemHovered()) return;
 
-        if (!sources.IsReady && !craftable)
+        if (!sources.IsReady && !craftable && !isDrop)
         {
             ImGui.BeginTooltip();
             try
@@ -908,7 +916,22 @@ public sealed class ListWindow : Window, IDisposable
         }
         if (!hasSources)
         {
-            ImGui.SetTooltip($"{Name(itemId)} can be crafted.");
+            if (!isDrop)
+            {
+                ImGui.SetTooltip($"{Name(itemId)} can be crafted.");
+                return;
+            }
+            ImGui.BeginTooltip();
+            try
+            {
+                if (craftable)
+                    ImGui.TextUnformatted($"{Name(itemId)} can be crafted.");
+                DrawDropNote(itemId);
+            }
+            finally
+            {
+                ImGui.EndTooltip();
+            }
             return;
         }
 
@@ -922,10 +945,26 @@ public sealed class ListWindow : Window, IDisposable
             if (more > 0)
                 ImGui.TextDisabled(ItemSourceSummary.MoreText(more));
             ImGui.TextDisabled("Availability and quest unlocks are not checked.");
+            if (isDrop)
+                DrawDropNote(itemId);
         }
         finally
         {
             ImGui.EndTooltip();
+        }
+    }
+
+    /// <summary>The monster-drop paragraph of the Vendor tooltip; call it inside an open tooltip.</summary>
+    private void DrawDropNote(uint itemId)
+    {
+        ImGui.PushTextWrapPos(ImGui.GetFontSize() * 30f);
+        try
+        {
+            ImGui.TextWrapped($"{Name(itemId)} is a monster drop. This plugin does not know which monsters; the Monster Loot Hunter plugin can look it up.");
+        }
+        finally
+        {
+            ImGui.PopTextWrapPos();
         }
     }
 

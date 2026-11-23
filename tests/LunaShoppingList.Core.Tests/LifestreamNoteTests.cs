@@ -17,7 +17,7 @@ public class LifestreamNoteTests
 
     [Fact]
     public void Requested_names_the_world_and_does_not_promise_arrival() =>
-        Assert.Equal("Asked Lifestream to go to Cerberus. Lifestream shows its own messages if it can't.",
+        Assert.Equal("Requesting travel to Cerberus via Lifestream.",
             LifestreamNote.Line(LifestreamOutcome.Requested, "Cerberus"));
 
     [Fact]

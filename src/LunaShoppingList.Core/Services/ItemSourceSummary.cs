@@ -26,6 +26,21 @@ public static class ItemSourceSummary
         return vendorText == NoneText || vendorText == NotReadyText ? CraftableText : vendorText + " (craftable)";
     }
 
+    /// <summary>Column text for an item that is a monster drop and that no vendor sells.</summary>
+    public const string DropText = "Monster drop";
+
+    /// <summary>
+    /// Adds the monster-drop hint to a vendor column text: a drop nothing sells reads <see cref="DropText"/>, one with
+    /// vendors reads e.g. "1,200 gil, monster drop"; a drop whose vendors are still loading and any non-drop are unchanged.
+    /// </summary>
+    /// <param name="text">The text from <see cref="ColumnText(IItemSources, uint)"/>, possibly through <see cref="WithCraftable"/>.</param>
+    /// <param name="isDrop">True when the item is on the drop list.</param>
+    public static string WithDrop(string text, bool isDrop)
+    {
+        if (!isDrop || text == NotReadyText) return text;
+        return text == NoneText ? DropText : text + ", monster drop";
+    }
+
     /// <summary>Tooltip lines shown before the rest is summarised as '+N more'.</summary>
     public const int DefaultTooltipLines = 10;
 

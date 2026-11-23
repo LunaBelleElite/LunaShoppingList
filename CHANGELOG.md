@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.14.0.0 - 2026-11-23
+
+This covers everything since 0.13.0.0.
+
+- The Vendor column now says when an ingredient is a monster drop. An item nothing sells reads Monster drop, and one with a vendor or a craft gets it added, such as Craftable, monster drop or 1,200 gil, monster drop. Hover the cell and it explains that the plugin doesn't know which monsters, and that the Monster Loot Hunter plugin can look that up. Sorting by Vendor ignores drops.
+- The drop list is downloaded once when the plugin starts, from Teamcraft's public repository on GitHub. It's a plain request that sends nothing about you, and it tries up to 3 times. If it never loads, you get no drop labels that session and nothing on screen. The list is small, about 237 items, so plenty of real drops show nothing. Drop data credit goes to Teamcraft.
+- After you click a world name, the note under the Route title now reads Requesting travel to the world via Lifestream.
+- Not yet checked in the game: any of the above. The riskiest parts are the download itself, and how the label and the wrapped hover note draw.
+
 ## 0.13.0.0 - 2026-11-23
 
 This covers everything since 0.12.1.0.
