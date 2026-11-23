@@ -3,7 +3,7 @@
     "Author": "LunaBelleElite",
     "Name": "Luna Shopping List",
     "InternalName": "LunaShoppingList",
-    "AssemblyVersion": "0.14.0.0",
+    "AssemblyVersion": "0.14.1.0",
     "Description": "Builds a price-optimised shopping list, grouped by world, from an Artisan crafting list using current Universalis prices.",
     "Punchline": "Builds a price-optimised shopping list from an Artisan crafting list.",
     "Tags": [
@@ -21,10 +21,10 @@
     "IsHide": false,
     "IsTestingExclusive": false,
     "DownloadCount": 0,
-    "LastUpdate": 1795469322,
-    "Changelog": "This covers everything since 0.13.0.0.\n\n- The Vendor column now says when an ingredient is a monster drop. An item nothing sells reads Monster drop, and one with a vendor or a craft gets it added, such as Craftable, monster drop or 1,200 gil, monster drop. Hover the cell and it explains that the plugin doesn't know which monsters, and that the Monster Loot Hunter plugin can look that up. Sorting by Vendor ignores drops.\n- The drop list is downloaded once when the plugin starts, from Teamcraft's public repository on GitHub. It's a plain request that sends nothing about you, and it tries up to 3 times. If it never loads, you get no drop labels that session and nothing on screen. The list is small, about 237 items, so plenty of real drops show nothing. Drop data credit goes to Teamcraft.\n- After you click a world name, the note under the Route title now reads Requesting travel to the world via Lifestream.\n- Not yet checked in the game: any of the above. The riskiest parts are the download itself, and how the label and the wrapped hover note draw.",
-    "DownloadLinkInstall": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.14.0.0/latest.zip",
-    "DownloadLinkUpdate": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.14.0.0/latest.zip",
-    "DownloadLinkTesting": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.14.0.0/latest.zip"
+    "LastUpdate": 1795474023,
+    "Changelog": "- Buttons say what they do now. Build shopping list is Find prices, the Exclude buttons say Untick, and Check/uncheck all is Tick all.\n- New Undo button. It takes back the last Tick or Untick button.\n- Hover a greyed-out button to see why it's greyed out.\n- Fixed: recipe data no longer retries forever after a failure, and changing ticks while prices load no longer shows old results.",
+    "DownloadLinkInstall": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.14.1.0/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.14.1.0/latest.zip",
+    "DownloadLinkTesting": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.14.1.0/latest.zip"
   }
 ]
