@@ -14,6 +14,8 @@ public sealed class ResultsWindow : Window
 
     private const string Footnote = "Prices are from Universalis, exclude market tax, and may be out of date. This plugin never travels on its own. A click on a world name only asks Lifestream to go there.";
     private const int TopWorlds = 8;
+    private const string ReplacesTypedText = "Applies the cheapest plan. Quantities you typed are replaced.";
+    private const string OptionReplacesTypedText = "Applies this plan. Quantities you typed are replaced.";
     private static readonly Vector4 Red = new(1f, 0.35f, 0.35f, 1f);
     private static readonly Vector4 Amber = new(1f, 0.75f, 0.2f, 1f);
 
@@ -66,6 +68,10 @@ public sealed class ResultsWindow : Window
     // The trade-off control: the options for the current book, the remembered budget (gil), the slider's value in the active unit,
     // and the option currently applied (null once the user edits a quantity by hand).
     private IReadOnlyList<PlanOption> planOptions = Array.Empty<PlanOption>();
+    // requestedBudget is what the user asked for (set only by the slider and by choosing a plan option); budget is what is in effect
+    // for the current book, Math.Min(requestedBudget, the book's largest extra). A narrower book lowers budget but never the request,
+    // so a later wider book restores it.
+    private long requestedBudget;
     private long budget;
     private int sliderValue;
     private bool percentUnit = true;
@@ -126,7 +132,7 @@ public sealed class ResultsWindow : Window
         PlanOption? pick = null;
         if (options.Count > 0)
         {
-            pick = PlanFrontier.Pick(options, budget);
+            pick = PlanFrontier.Pick(options, Math.Min(requestedBudget, options.Max(o => o.ExtraGil)));
             s.Apply(pick!.Lines);
         }
         else
@@ -150,7 +156,7 @@ public sealed class ResultsWindow : Window
         routeOrders.Clear();
         itemOrder = null;
         if (planOptions.Count > 0)
-            budget = Math.Min(budget, planOptions.Max(o => o.ExtraGil));
+            budget = Math.Min(requestedBudget, planOptions.Max(o => o.ExtraGil));
         sliderValue = Math.Min(BudgetToSlider(budget), SliderMax());
         foreach (var id in openItems.Keys.Where(id => !c.Present.Contains(id)).ToList())
             openItems.Remove(id);
@@ -257,7 +263,7 @@ public sealed class ResultsWindow : Window
         1 => (a, b) => itemRows[a].UnitsN.CompareTo(itemRows[b].UnitsN),
         2 => (a, b) => itemRows[a].PriceN.CompareTo(itemRows[b].PriceN),
         3 => (a, b) => itemRows[a].CostN.CompareTo(itemRows[b].CostN),
-        // Seen sorts by age: ascending is the most recently reviewed first.
+        // Age (formerly "Seen") sorts by age: ascending is the most recently reviewed first.
         4 => (a, b) => itemRows[b].Reviewed.CompareTo(itemRows[a].Reviewed),
         5 => (a, b) => state.GetQuantity(item.ItemId, item.Worlds[a].WorldId).CompareTo(state.GetQuantity(item.ItemId, item.Worlds[b].WorldId)),
         _ => null,
@@ -333,6 +339,7 @@ public sealed class ResultsWindow : Window
 
     private void SetBudgetFromOption(PlanOption option)
     {
+        requestedBudget = option.ExtraGil;
         budget = option.ExtraGil;
         sliderValue = Math.Min(BudgetToSlider(budget), SliderMax());
         ApplyOption(option);
@@ -385,23 +392,34 @@ public sealed class ResultsWindow : Window
             DrawTradeOff();
 
         var s = CurrentSummary();
-        ImGui.TextUnformatted($"Your choices: {s.WorldCount} worlds to visit, {s.GrandTotal:N0} gil in total");
+        ImGui.TextUnformatted($"Your choices: {Plural.Of(s.WorldCount, "world")} to visit, {s.GrandTotal:N0} gil in total");
         if (s.Unmet.Count > 0)
         {
             ImGui.SameLine();
-            ImGui.TextColored(Red, $"{s.Unmet.Count} items not fully covered");
+            ImGui.TextColored(Red, $"{Plural.Of(s.Unmet.Count, "item")} not fully covered");
         }
-        ImGui.SameLine();
+        // The checkbox wraps to its own line when the totals leave no room for it, instead of clipping at the window edge.
+        SameLineIfFits(ImGui.CalcTextSize("Show item list").X + ImGui.GetFrameHeight() + ImGui.GetStyle().ItemInnerSpacing.X);
         ImGui.Checkbox("Show item list", ref showItems);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Untick to hide the per-item prices and show only the route.");
+    }
+
+    /// <summary>Puts the next widget, <paramref name="nextWidth"/> wide, on the same line when it fits in the window, otherwise leaves it to wrap onto a new line.</summary>
+    private static void SameLineIfFits(float nextWidth)
+    {
+        var style = ImGui.GetStyle();
+        var right = ImGui.GetCursorScreenPos().X + ImGui.GetContentRegionAvail().X;
+        if (ImGui.GetItemRectMax().X + style.ItemSpacing.X + nextWidth > right)
+            return;
+        ImGui.SameLine();
     }
 
     private void DrawTradeOff()
     {
         var best = PlanFrontier.Pick(planOptions, budget);
         var label = applied != null
-            ? $"Plan options: {applied.WorldCount:N0} worlds, +{applied.ExtraGil:N0} gil ({applied.Total:N0} total)###planOptions"
+            ? $"Plan options: {Plural.Of(applied.WorldCount, "world")}, +{applied.ExtraGil:N0} gil ({applied.Total:N0} total)###planOptions"
             : "Plan options: edited by hand###planOptions";
         ImGui.SetNextItemOpen(planOpen);
         planOpen = ImGui.CollapsingHeader(label);
@@ -425,11 +443,14 @@ public sealed class ResultsWindow : Window
         {
             value = Math.Clamp(value, 0, SliderMax());
             sliderValue = value;
-            budget = SliderToBudget(value);
+            requestedBudget = SliderToBudget(value);
+            budget = Math.Min(requestedBudget, planOptions.Max(o => o.ExtraGil));
             var pick = PlanFrontier.Pick(planOptions, budget);
             if (pick != null && !ReferenceEquals(pick, applied))
                 ApplyOption(pick);
         }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Moving this applies the best plan within that budget. Quantities you typed are replaced.");
         ImGui.SameLine();
         ImGui.TextUnformatted(valueText);
         ImGui.SameLine();
@@ -447,12 +468,14 @@ public sealed class ResultsWindow : Window
 
         // Row 2: the readout in a green box.
         if (best != null)
-            DrawGreenBox($"Fewest worlds within that: {best.WorldCount:N0} worlds, +{best.ExtraGil:N0} gil ({best.Total:N0} total)");
+            DrawGreenBox($"Fewest worlds within that: {Plural.Of(best.WorldCount, "world")}, +{best.ExtraGil:N0} gil ({best.Total:N0} total)");
 
         DrawOptionList();
 
         if (ImGui.Button("Reset to cheapest###resetCheapest"))
             SetBudgetFromOption(planOptions[0]);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(ReplacesTypedText);
         ImGui.TextDisabled("These are good plans found by a fast search, not proven to be the lowest possible.");
         ImGui.TextDisabled("Your own quantity changes below still override the plan.");
     }
@@ -514,6 +537,8 @@ public sealed class ResultsWindow : Window
                         SetBudgetFromOption(option);
                     var selected = ReferenceEquals(option, applied);
                     var hovered = ImGui.IsItemHovered();
+                    if (hovered)
+                        ImGui.SetTooltip(i == 0 ? ReplacesTypedText : OptionReplacesTypedText);
                     var dl = ImGui.GetWindowDrawList();
                     var max = pos + new Vector2(width, rowH);
                     if (selected)
@@ -528,7 +553,7 @@ public sealed class ResultsWindow : Window
 
                     var textY = pos.Y + (rowH - ImGui.GetTextLineHeight()) * 0.5f;
                     var textColor = selected ? textStrong : textNormal;
-                    dl.AddText(new Vector2(pos.X + Pad, textY), textColor, $"{option.WorldCount:N0} worlds");
+                    dl.AddText(new Vector2(pos.X + Pad, textY), textColor, Plural.Of(option.WorldCount, "world"));
                     var rightText = i == 0 ? "cheapest" : $"+{option.ExtraGil:N0} gil";
                     dl.AddText(new Vector2(pos.X + width - Pad - ImGui.CalcTextSize(rightText).X, textY), textColor, rightText);
 
@@ -611,7 +636,7 @@ public sealed class ResultsWindow : Window
         if (book.Skipped.Count > 0)
         {
             ImGui.Separator();
-            ImGui.TextUnformatted("Skipped (you excluded these)");
+            ImGui.TextUnformatted("Skipped (you unticked these)");
             foreach (var s in book.Skipped)
                 ImGui.BulletText($"{Name(s.ItemId)} x{s.Quantity:N0}");
         }
@@ -631,6 +656,12 @@ public sealed class ResultsWindow : Window
             }
         }
 
+        DrawFootnote();
+    }
+
+    /// <summary>The prices disclaimer. Drawn under the item list, or under the route when the item list is hidden, so it is always on screen once.</summary>
+    private static void DrawFootnote()
+    {
         ImGui.Separator();
         ImGui.TextWrapped(Footnote);
     }
@@ -664,7 +695,7 @@ public sealed class ResultsWindow : Window
 
         var all = showAll.Contains(item.ItemId);
         if (item.Worlds.Count > TopWorlds
-            && ImGui.SmallButton(all ? $"Show top {TopWorlds} worlds###toggle" : $"Show all {item.Worlds.Count} worlds###toggle"))
+            && ImGui.SmallButton(all ? $"Show top {Plural.Of(TopWorlds, "world")}###toggle" : $"Show all {Plural.Of(item.Worlds.Count, "world")}###toggle"))
         {
             if (all)
                 showAll.Remove(item.ItemId);
@@ -686,9 +717,18 @@ public sealed class ResultsWindow : Window
             ImGui.TableSetupColumn("For sale", ImGuiTableColumnFlags.WidthFixed, FitWidth("For sale", itemRows.Select(x => x.Units)));
             ImGui.TableSetupColumn("Unit price", ImGuiTableColumnFlags.WidthFixed, FitWidth("Unit price", itemRows.Select(x => x.Price)));
             ImGui.TableSetupColumn("Cost", ImGuiTableColumnFlags.WidthFixed, FitWidth("Cost", itemRows.Select(x => x.Cost)));
-            ImGui.TableSetupColumn("Seen", ImGuiTableColumnFlags.WidthFixed, FitWidth("Seen", new[] { "stale" }));
-            ImGui.TableSetupColumn("Buy", ImGuiTableColumnFlags.WidthFixed, 130);
-            ImGui.TableHeadersRow();
+            ImGui.TableSetupColumn("Age", ImGuiTableColumnFlags.WidthFixed, FitWidth("Age", new[] { "stale" }));
+            // The Buy column holds an InputInt, so its width follows the font (the box itself fills the cell), not a fixed pixel count.
+            ImGui.TableSetupColumn("Buy here", ImGuiTableColumnFlags.WidthFixed, ImGui.GetFontSize() * 9f);
+            // The header row is drawn by hand (what TableHeadersRow does) so the Age header can carry a tooltip.
+            ImGui.TableNextRow(ImGuiTableRowFlags.Headers);
+            for (var c = 0; c < 6; c++)
+            {
+                ImGui.TableSetColumnIndex(c);
+                ImGui.TableHeader(ImGui.TableGetColumnName(c));
+                if (c == 4 && ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Marked stale when the oldest listing used is over 24 hours old.");
+            }
 
             // Display order only. Everything below looks the world up by item id and world id, never by displayed position.
             var order = OfferDisplayOrder(item, itemRows);
@@ -723,7 +763,7 @@ public sealed class ResultsWindow : Window
                     if (r.Stale)
                         ImGui.TextColored(Amber, "stale");
                     ImGui.TableNextColumn();
-                    ImGui.SetNextItemWidth(120);
+                    ImGui.SetNextItemWidth(-1);
                     if (ImGui.InputInt("##buy", ref qty, 1, 10))
                     {
                         state.SetQuantity(item.ItemId, w.WorldId, qty);
@@ -817,7 +857,7 @@ public sealed class ResultsWindow : Window
             if (DrawWorldLink(w.WorldName, "route"))
                 lifestreamNote = lifestream.GoTo(w.WorldName);
             ImGui.SameLine(0, 0);
-            ImGui.TextUnformatted($" - {w.Lines.Count} items - {w.Total:N0} gil");
+            ImGui.TextUnformatted($" - {Plural.Of(w.Lines.Count, "item")} - {w.Total:N0} gil");
             if (!open)
                 continue;
             // The columns can be dragged by their borders. They start as wide as their longest text, and a resizable table keeps
@@ -865,6 +905,8 @@ public sealed class ResultsWindow : Window
 
         ImGui.Separator();
         ImGui.TextUnformatted($"Grand total: {s.GrandTotal:N0} gil");
-        ImGui.TextUnformatted($"Worlds to visit: {s.WorldCount}");
+        ImGui.TextUnformatted($"Worlds to visit: {s.WorldCount:N0}");
+        if (!showItems)
+            DrawFootnote();
     }
 }

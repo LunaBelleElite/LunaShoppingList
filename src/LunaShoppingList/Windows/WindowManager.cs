@@ -11,7 +11,7 @@ namespace LunaShoppingList.Windows;
 /// </summary>
 internal sealed class WindowManager : IWindowHost, IDisposable
 {
-    private const string ResultsTitleSuffix = " - shopping list";
+    private const string ResultsTitleSuffix = " - where to buy";
 
     private readonly Configuration config;
     private readonly IArtisanListSource artisan;

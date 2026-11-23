@@ -10,6 +10,7 @@ public sealed class ShoppingSession
     private readonly IItemInfo _items;
     private IReadOnlyList<Requirement> _requirements = Array.Empty<Requirement>();
     private readonly HashSet<uint> _explicitIncludes = new();
+    private SelectionSnapshot? _undo;
 
     /// <summary>Creates a session.</summary>
     /// <param name="calc">Computes requirements for an Artisan list.</param>
@@ -19,6 +20,59 @@ public sealed class ShoppingSession
         _calc = calc ?? throw new ArgumentNullException(nameof(calc));
         _items = items ?? throw new ArgumentNullException(nameof(items));
     }
+
+    /// <summary>The selection (unticked ids and hand-ticked ids) as it was before a bulk change, for <see cref="Undo"/>.</summary>
+    /// <param name="Label">What the bulk change was, e.g. the button's name.</param>
+    /// <param name="Excluded">The excluded item ids before the change.</param>
+    /// <param name="Includes">The explicitly ticked item ids before the change.</param>
+    public sealed record SelectionSnapshot(string Label, IReadOnlySet<uint> Excluded, IReadOnlySet<uint> Includes);
+
+    /// <summary>True when <see cref="Undo"/> has a bulk change to take back.</summary>
+    public bool CanUndo => _undo is not null;
+
+    /// <summary>The label given to the bulk change <see cref="Undo"/> would take back, or null when there is none.</summary>
+    public string? UndoLabel => _undo?.Label;
+
+    /// <summary>
+    /// Runs a bulk change (one of the Untick/Tick buttons) so it can be taken back. If it changed the excluded or the
+    /// explicitly ticked ids, the state from before it is kept as the single undo level (replacing any earlier one) and true is
+    /// returned; if it changed nothing, false is returned and an earlier undo level is left as it was.
+    /// </summary>
+    /// <param name="label">What the change is called.</param>
+    /// <param name="change">The change, run on this session.</param>
+    public bool ApplyBulk(string label, Action<ShoppingSession> change)
+    {
+        ArgumentNullException.ThrowIfNull(label);
+        ArgumentNullException.ThrowIfNull(change);
+        var excluded = ExportExclusions();
+        var includes = ExportIncludes();
+        var earlier = _undo;
+        change(this);
+        // The change itself may call a clearing method (none of the bulk methods does); keep any earlier level either way.
+        if (Exclusions.ExcludedItemIds.SetEquals(excluded) && _explicitIncludes.SetEquals(includes))
+        {
+            _undo = earlier;
+            return false;
+        }
+        _undo = new SelectionSnapshot(label, excluded, includes);
+        return true;
+    }
+
+    /// <summary>Restores the selection from before the last bulk change and forgets it. Returns its label, or null when there was nothing to undo.</summary>
+    public string? Undo()
+    {
+        var snapshot = _undo;
+        if (snapshot is null) return null;
+        Exclusions.ExcludedItemIds.Clear();
+        foreach (var id in snapshot.Excluded) Exclusions.ExcludedItemIds.Add(id);
+        _explicitIncludes.Clear();
+        foreach (var id in snapshot.Includes) _explicitIncludes.Add(id);
+        _undo = null;
+        return snapshot.Label;
+    }
+
+    /// <summary>Forgets the undo level without restoring anything.</summary>
+    public void ClearUndo() => _undo = null;
 
     /// <summary>Current requirements, ordered by item id.</summary>
     public IReadOnlyList<Requirement> Requirements => _requirements;
@@ -39,6 +93,7 @@ public sealed class ShoppingSession
     {
         ArgumentNullException.ThrowIfNull(list);
         _requirements = _calc.Compute(list).OrderBy(r => r.ItemId).ToList();
+        _undo = null;
     }
 
     /// <summary>
@@ -56,6 +111,7 @@ public sealed class ShoppingSession
         var requirements = _calc.Compute(list).OrderBy(r => r.ItemId).ToList();
         var excluded = excludedItemIds.ToList();
         _requirements = requirements;
+        _undo = null;
         Exclusions.ExcludedItemIds.Clear();
         foreach (var id in excluded) Exclusions.ExcludedItemIds.Add(id);
     }
@@ -114,6 +170,7 @@ public sealed class ShoppingSession
     {
         ArgumentNullException.ThrowIfNull(paste);
         _requirements = paste.Requirements.OrderBy(r => r.ItemId).ToList();
+        _undo = null;
         Exclusions.ExcludedItemIds.Clear();
         _explicitIncludes.Clear();
     }
@@ -123,6 +180,7 @@ public sealed class ShoppingSession
     /// <param name="included">True to buy it, false to skip it.</param>
     public void SetIncluded(uint itemId, bool included)
     {
+        _undo = null;
         Exclusions.SetExcluded(itemId, !included);
         if (included) _explicitIncludes.Add(itemId);
         else _explicitIncludes.Remove(itemId);
@@ -161,6 +219,7 @@ public sealed class ShoppingSession
     public void ImportIncludes(IEnumerable<uint> itemIds)
     {
         var copy = itemIds?.ToList() ?? new List<uint>();
+        _undo = null;
         _explicitIncludes.Clear();
         foreach (var id in copy) _explicitIncludes.Add(id);
     }
@@ -174,6 +233,7 @@ public sealed class ShoppingSession
     {
         ArgumentNullException.ThrowIfNull(itemIds);
         var copy = itemIds.ToList();
+        _undo = null;
         Exclusions.ExcludedItemIds.Clear();
         foreach (var id in copy) Exclusions.ExcludedItemIds.Add(id);
     }

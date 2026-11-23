@@ -18,7 +18,8 @@ public sealed class ListWindow : Window, IDisposable
     private const string RecipesFailedText = "Recipe data could not be loaded. Check /xllog, then try again.";
     private const string GoalsPendingBuildTooltip = "Waiting for recipe data. The goals' materials are not loaded yet.";
     private const string FootnoteText = "Prices are from Universalis, exclude market tax, and may be out of date. This plugin never travels on its own. A click on a world name only asks Lifestream to go there.";
-    private const string OpenedText = "Shopping list opened in its own window.";
+    private const string OpenedText = "Opened the results in their own window.";
+    private const string TicksChangedText = "Ticks changed while prices were loading. Press Find prices again.";
     private const string NotOnMarketSuffix = " (not sold on the market board)";
     private const string NoRetainerDataText = "Open each retainer once to count what they hold.";
     private const string ListChangedCancelledText = "The list changed, so the running build was cancelled.";
@@ -50,9 +51,9 @@ public sealed class ListWindow : Window, IDisposable
     // UI-thread state.
     private string sourceMessage = string.Empty;
 
-    // True when the Exclude crafted items option was on but the recipe index was not built yet, so nothing was unticked.
+    // True when the Untick crafted items option was on but the recipe index was not built yet, so nothing was unticked.
     private bool craftedPending;
-    // Shown under the ingredient buttons after the Exclude crafted items button could not run yet.
+    // Shown under the ingredient buttons after the Untick crafted items button could not run yet.
     private string craftedButtonNote = string.Empty;
     // True when a custom list has goals but the recipe index was not built yet, so only its plain rows were loaded.
     private bool goalsPending;
@@ -64,11 +65,15 @@ public sealed class ListWindow : Window, IDisposable
     private readonly Dictionary<uint, string> names = new();
 
     // Vendor column text per item, kept once the vendor index is ready so the rows are not rebuilt every frame.
-    private readonly Dictionary<uint, string> vendorText = new();
+    private readonly Dictionary<uint, VendorCell> vendorText = new();
+
+    /// <summary>One Vendor column cell: its text and the facts the draw code needs. Cached once <see cref="VendorInfoReady"/>.</summary>
+    private readonly record struct VendorCell(string Text, bool HasSources, bool Craftable, bool IsDrop);
 
     // The Vendor column is sized to its widest text so nothing is cut off. The wanted width is measured once per set of
     // rows, vendor index state and font (not every frame).
     private float vendorWantedWidth = -1f;
+    private bool vendorCacheHasRecipes;
     private float vendorWantedFontKey;
     private bool vendorWantedReady;
 
@@ -91,6 +96,8 @@ public sealed class ListWindow : Window, IDisposable
     private int generation;
     private OfferBook? pendingBook;
     private IReadOnlyList<PlanOption>? pendingOptions;
+    // UI thread only: the excluded ids the current build was started with.
+    private HashSet<uint>? buildExclusions;
     private volatile bool building;
     private volatile string progressText = string.Empty;
     private volatile string errorText = string.Empty;
@@ -230,6 +237,15 @@ public sealed class ListWindow : Window, IDisposable
     /// </summary>
     private void ApplyPendingRecipeData()
     {
+        if (!vendorCacheHasRecipes && recipes is LuminaRecipeData { IsResultIndexReady: true })
+        {
+            // Cells cached while the index had failed for good have no craftable hint: build them again once it exists.
+            vendorCacheHasRecipes = true;
+            vendorText.Clear();
+            vendorWantedWidth = -1f;
+        }
+        if (craftedButtonNote.Length > 0 && recipes is LuminaRecipeData { IsResultIndexReady: true })
+            craftedButtonNote = string.Empty;
         if ((goalsPending || craftedPending) && !userEdited && !building
             && recipes is LuminaRecipeData { IsResultIndexReady: true })
             LoadList();
@@ -237,6 +253,7 @@ public sealed class ListWindow : Window, IDisposable
 
     private void LoadList()
     {
+        craftedButtonNote = string.Empty;
         userEdited = false;
         sourceMessage = string.Empty;
         craftedPending = false;
@@ -254,7 +271,7 @@ public sealed class ListWindow : Window, IDisposable
                 else
                 {
                     session.LoadFromList(list, config.ExcludedItemsByList.TryGetValue(id, out var saved) ? saved : []);
-                    // Order matters: the ticks the player set by hand are known before Exclude crafted items runs.
+                    // Order matters: the ticks the player set by hand are known before Untick crafted items runs.
                     session.ImportIncludes(config.IncludedItemsByList.TryGetValue(id, out var included) ? included : []);
                     if (config.ExcludeCraftedItems)
                         ApplyExcludeCrafted();
@@ -398,7 +415,14 @@ public sealed class ListWindow : Window, IDisposable
             // Reads the list and its saved choices again; a running build is cancelled and its outcome discarded.
             ImGui.SameLine();
             if (ImGui.SmallButton("Reload list"))
+            {
+                // An explicit request: also lets a recipe index that failed for good try again.
+                if (recipes is LuminaRecipeData data)
+                    data.RetryNow();
                 LoadList();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Reads this list and your saved ticks again. A running build is cancelled.");
         }
         if (sourceMessage.Length > 0)
             WrappedColored(WarningColor, sourceMessage);
@@ -438,10 +462,14 @@ public sealed class ListWindow : Window, IDisposable
     {
         ImGui.TextUnformatted("Where to shop");
         var scope = config.LastScope;
-        if (ImGui.RadioButton("Cross-world (worlds reachable from a main-city aetheryte: your region)", scope == TravelScopeKind.CrossWorld))
+        if (ImGui.RadioButton("My region (cross-world)", scope == TravelScopeKind.CrossWorld))
             SetScope(TravelScopeKind.CrossWorld);
-        if (ImGui.RadioButton("Cross data center (everywhere; needs Data Center Travel for other regions)", scope == TravelScopeKind.CrossDataCenter))
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Worlds you can reach from a main-city aetheryte.");
+        if (ImGui.RadioButton("All data centers", scope == TravelScopeKind.CrossDataCenter))
             SetScope(TravelScopeKind.CrossDataCenter);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Includes other regions. Needs Data Center Travel for those.");
     }
 
     private void SetScope(TravelScopeKind scope)
@@ -462,33 +490,53 @@ public sealed class ListWindow : Window, IDisposable
             return;
         }
 
-        if (ImGui.Button("Check/uncheck all"))
+        var allIncluded = session.AreAllIncluded;
+        var tickAllLabel = allIncluded ? "Untick all" : "Tick all";
+        if (ImGui.Button(tickAllLabel + "###tickAll"))
         {
-            session.SetAllIncluded(!session.AreAllIncluded);
+            session.ApplyBulk(tickAllLabel, s => s.SetAllIncluded(!allIncluded));
             PersistExclusions();
         }
-        SameLineIfFits("Exclude items I have enough of");
-        if (ImGui.Button("Exclude items I have enough of"))
+        SameLineIfFits("Untick items I have enough of");
+        if (ImGui.Button("Untick items I have enough of"))
         {
-            session.ExcludeOwned(OwnedEverywhere);
+            session.ApplyBulk("Untick items I have enough of", s => s.ExcludeOwned(OwnedEverywhere));
             PersistExclusions();
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Unticks every ingredient where what you hold (bags, saddlebag, retainers) already covers the quantity needed.\nRetainer counts are as of your last visit to each retainer. Items you have not got enough of stay as they are.");
-        SameLineIfFits("Exclude crafted items");
-        if (ImGui.Button("Exclude crafted items"))
+            ImGui.SetTooltip("Unticks every ingredient where what you hold (bags, saddlebag, retainers) already covers the quantity needed, including items you ticked by hand.\nRetainer counts are as of your last visit to each retainer. Items you have not got enough of stay as they are.");
+        SameLineIfFits("Untick crafted items");
+        if (ImGui.Button("Untick crafted items"))
             ExcludeCraftedNow();
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Unticks every ingredient that can be crafted, so only the raw materials are left to buy.\nCrystals, shards and clusters are not touched.");
-        SameLineIfFits("Exclude items in my house");
-        if (ImGui.Button("Exclude items in my house"))
+            ImGui.SetTooltip("Unticks every ingredient that can be crafted, so only the raw materials are left to buy, including items you ticked by hand.\nCrystals, shards and clusters are not touched.");
+        SameLineIfFits("Untick items in my house");
+        if (ImGui.Button("Untick items in my house"))
         {
             // Unknown (no house counted yet) leaves the item ticked.
-            session.ExcludeOwned(id => owned.Summarize(id).House);
+            session.ApplyBulk("Untick items in my house", s => s.ExcludeOwned(id => owned.Summarize(id).House));
             PersistExclusions();
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Unticks every ingredient that is already in your house (placed or in the storeroom) in the quantity needed.\nOpen the Furnishings window once in each house first.");
+            ImGui.SetTooltip("Unticks every ingredient that is already in your house (placed or in the storeroom) in the quantity needed, including items you ticked by hand.\nOpen the Furnishings window once in each house first.\nHouse items are not counted by Untick items I have enough of.");
+        SameLineIfFits("Undo");
+        ImGui.BeginDisabled(!session.CanUndo);
+        try
+        {
+            if (ImGui.Button("Undo"))
+            {
+                session.Undo();
+                PersistExclusions();
+            }
+        }
+        finally
+        {
+            ImGui.EndDisabled();
+        }
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(session.CanUndo
+                ? $"Undo \"{session.UndoLabel}\": puts the ticks back as they were."
+                : "Nothing to undo. This only undoes the last Tick/Untick button.");
         if (craftedButtonNote.Length > 0)
             WrappedColored(DimColor, craftedButtonNote);
 
@@ -500,11 +548,13 @@ public sealed class ListWindow : Window, IDisposable
         var free = ImGui.GetContentRegionAvail().Y - reserved;
         var tableHeight = Math.Max(rowHeight * 7, free);
         var padding = ImGui.GetStyle().CellPadding.X * 2;
-        var vendorWidth = VendorWantedWidth(padding, ImGui.GetContentRegionAvail().X);
+        var wantedWidth = VendorWantedWidth(padding);
+        var vendorWidth = Math.Min(wantedWidth, Math.Max(VendorColumnWidth(padding), ImGui.GetContentRegionAvail().X * 0.6f));
         // A resizable table keeps the widths from its first frame and no public call sets one later, so the wanted Vendor
         // width is part of the table id: when it changes the table starts over at the new width (and without a saved sort).
-        // The column count is part of it too, so a table saved with fewer columns is never reused.
-        if (ImGui.BeginTable($"##ingredients{IngredientColumns}c{(int)vendorWidth}", IngredientColumns, ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Sortable | ImGuiTableFlags.SortTristate, new Vector2(-1, tableHeight)))
+        // The id uses the uncapped wanted width (rows, vendor state, font only), so resizing the window never changes it;
+        // the capped value only sets the initial column width. The column count is part of it too, so a table saved with fewer columns is never reused.
+        if (ImGui.BeginTable($"##ingredients{IngredientColumns}c{(int)wantedWidth}", IngredientColumns, ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Sortable | ImGuiTableFlags.SortTristate, new Vector2(-1, tableHeight)))
         {
             try
             {
@@ -514,7 +564,7 @@ public sealed class ListWindow : Window, IDisposable
                 ImGui.TableSetupColumn("Buy", ImGuiTableColumnFlags.WidthFixed | ImGuiTableColumnFlags.NoResize,
                     Math.Max(ImGui.CalcTextSize("Buy").X, ImGui.GetFrameHeight()) + padding);
                 ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch, 1f);
-                ImGui.TableSetupColumn("Quantity", ImGuiTableColumnFlags.WidthFixed, CountColumnWidth("Quantity", padding));
+                ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed, CountColumnWidth("Qty", padding));
                 ImGui.TableSetupColumn("On you", ImGuiTableColumnFlags.WidthFixed, CountColumnWidth("On you", padding));
                 ImGui.TableSetupColumn("Retainers", ImGuiTableColumnFlags.WidthFixed, CountColumnWidth("Retainers", padding));
                 ImGui.TableSetupColumn("House", ImGuiTableColumnFlags.WidthFixed, CountColumnWidth("House", padding));
@@ -661,10 +711,10 @@ public sealed class ListWindow : Window, IDisposable
 
     /// <summary>
     /// The Vendor column width: the widest vendor text on the list plus padding, never less than <see cref="VendorColumnWidth"/>,
-    /// and never more than about 60% of the table so Item keeps room. Measured only when the rows, the vendor index state or the
-    /// font changed.
+    /// (the caller caps it to about 60% of the table so Item keeps room). Measured only when the rows, the vendor index state or the
+    /// font changed, so it does not depend on the window size.
     /// </summary>
-    private float VendorWantedWidth(float padding, float tableWidth)
+    private float VendorWantedWidth(float padding)
     {
         var minimum = VendorColumnWidth(padding);
         var fontKey = ImGui.CalcTextSize("Vendor").X;
@@ -672,12 +722,12 @@ public sealed class ListWindow : Window, IDisposable
         {
             var widest = 0f;
             foreach (var r in rows)
-                widest = Math.Max(widest, ImGui.CalcTextSize(VendorText(r.ItemId)).X);
+                widest = Math.Max(widest, ImGui.CalcTextSize(VendorCellFor(r.ItemId).Text).X);
             vendorWantedWidth = Math.Max(minimum, widest + padding);
             vendorWantedReady = VendorInfoReady;
             vendorWantedFontKey = fontKey;
         }
-        return Math.Min(vendorWantedWidth, Math.Max(minimum, tableWidth * 0.6f));
+        return vendorWantedWidth;
     }
 
     /// <summary>The vendors alone, cached once the vendor index is ready.</summary>
@@ -692,24 +742,29 @@ public sealed class ListWindow : Window, IDisposable
 
     private bool IsCraftable(uint itemId)
     {
-        if (recipes is LuminaRecipeData { IsResultIndexReady: false } data)
-        {
-            data.WarmUp();
+        // Never starts the recipe index from here: it runs every frame, and a failing build would restart each time.
+        // The plugin warms it at start, and the load and click paths retry on purpose.
+        if (recipes is LuminaRecipeData { IsResultIndexReady: false })
             return false;
-        }
         return recipes.FindRecipeForItem(itemId) != null;
     }
 
-    /// <summary>The Vendor column text for an item (vendors, plus a craftable hint), cached once everything it reads is ready.</summary>
-    private string VendorText(uint itemId)
+    /// <summary>The Vendor column cell for an item (text and facts), cached once everything it reads is ready.</summary>
+    private VendorCell VendorCellFor(uint itemId)
     {
-        if (!vendorText.TryGetValue(itemId, out var text))
-        {
-            text = ItemSourceSummary.WithDrop(ItemSourceSummary.WithCraftable(RawVendorText(itemId), IsCraftable(itemId)), drops.IsDrop(itemId));
-            if (VendorInfoReady)
-                vendorText[itemId] = text;
-        }
-        return text;
+        if (vendorText.TryGetValue(itemId, out var cell))
+            return cell;
+        var raw = RawVendorText(itemId);
+        var craftable = IsCraftable(itemId);
+        var isDrop = drops.IsDrop(itemId);
+        cell = new VendorCell(
+            ItemSourceSummary.WithDrop(ItemSourceSummary.WithCraftable(raw, craftable), isDrop),
+            raw != ItemSourceSummary.NoneText && raw != ItemSourceSummary.NotReadyText,
+            craftable,
+            isDrop);
+        if (VendorInfoReady)
+            vendorText[itemId] = cell;
+        return cell;
     }
 
     /// <summary>Bags, crystals and saddlebag; <c>null</c> until the bags have been read for this character.</summary>
@@ -731,12 +786,14 @@ public sealed class ListWindow : Window, IDisposable
     {
         if (recipes is LuminaRecipeData { IsResultIndexReady: false } data)
         {
-            data.WarmUp();
-            craftedButtonNote = data.IsResultIndexFailed ? RecipesFailedText : "Recipe data is still loading. Press the button again in a moment.";
+            // Read the failure first: RetryNow clears it, and this press is the user's explicit retry.
+            var failed = data.IsResultIndexFailed;
+            data.RetryNow();
+            craftedButtonNote = failed ? RecipesFailedText + " Trying again, press the button again in a moment." : "Recipe data is still loading. Press the button again in a moment.";
             return;
         }
         craftedButtonNote = string.Empty;
-        session.ExcludeCrafted(recipes, overrideHandTicks: true);
+        session.ApplyBulk("Untick crafted items", s => s.ExcludeCrafted(recipes, overrideHandTicks: true));
         PersistExclusions();
     }
 
@@ -881,11 +938,7 @@ public sealed class ListWindow : Window, IDisposable
 
     private void DrawVendor(uint itemId)
     {
-        var text = VendorText(itemId);
-        var raw = RawVendorText(itemId);
-        var hasSources = raw != ItemSourceSummary.NoneText && raw != ItemSourceSummary.NotReadyText;
-        var craftable = IsCraftable(itemId);
-        var isDrop = drops.IsDrop(itemId);
+        var (text, hasSources, craftable, isDrop) = VendorCellFor(itemId);
         if (hasSources || craftable || isDrop)
         {
             // The normal text colour, softened, so real sources read as calm secondary information in light and dark themes.
@@ -918,7 +971,8 @@ public sealed class ListWindow : Window, IDisposable
         {
             if (!isDrop)
             {
-                ImGui.SetTooltip($"{Name(itemId)} can be crafted.");
+                if (craftable)
+                    ImGui.SetTooltip($"{Name(itemId)} can be crafted.");
                 return;
             }
             ImGui.BeginTooltip();
@@ -1031,29 +1085,36 @@ public sealed class ListWindow : Window, IDisposable
             ImGui.BeginDisabled();
             try
             {
-                ImGui.Button("Build shopping list");
+                ImGui.Button("Find prices");
             }
             finally
             {
                 ImGui.EndDisabled();
             }
             ImGui.SameLine();
-            if (ImGui.Button("Cancel")) CancelBuild();
+            if (ImGui.Button("Cancel build")) CancelBuild();
         }
         else
         {
             // Pricing only the plain rows while the goals' materials are missing would give a result with no sign of it.
-            ImGui.BeginDisabled(!loggedIn || rows.Count == 0 || goalsPending);
+            // A build with nothing ticked would price nothing (every row is skipped), so it is not offered.
+            var nothingTicked = rows.Count > 0 && !rows.Any(r => session.IsIncluded(r.ItemId));
+            var reason = !loggedIn ? "Log in to a character first."
+                : goalsPending ? (recipes is LuminaRecipeData { IsResultIndexFailed: true } ? RecipesFailedText + " Press Reload list to try again." : GoalsPendingBuildTooltip)
+                : rows.Count == 0 ? "This list has no ingredients."
+                : nothingTicked ? "Tick at least one item."
+                : null;
+            ImGui.BeginDisabled(reason != null);
             try
             {
-                if (ImGui.Button("Build shopping list")) StartBuild();
+                if (ImGui.Button("Find prices")) StartBuild();
             }
             finally
             {
                 ImGui.EndDisabled();
             }
-            if (goalsPending && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                ImGui.SetTooltip(GoalsPendingBuildTooltip);
+            if (reason != null && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip(reason);
         }
 
         if (progressText.Length > 0)
@@ -1079,6 +1140,8 @@ public sealed class ListWindow : Window, IDisposable
         var requirements = session.Requirements.ToList();
         var exclusions = new ExclusionState();
         exclusions.ExcludeAll(session.ExportExclusions(), true);
+        // Remembered so a build that finishes after the ticks changed is not published.
+        buildExclusions = new HashSet<uint>(session.ExportExclusions());
         var scope = config.LastScope;
 
         int gen;
@@ -1136,8 +1199,8 @@ public sealed class ListWindow : Window, IDisposable
                 {
                     progressText = string.Empty;
                     errorText = ex is TaskCanceledException { InnerException: TimeoutException }
-                        ? "Could not build the shopping list: a request timed out. Try again."
-                        : "Could not build the shopping list: " + ex.Message;
+                        ? "Could not find prices: a request timed out. Try again."
+                        : "Could not find prices: " + ex.Message;
                 });
             }
         });
@@ -1190,6 +1253,13 @@ public sealed class ListWindow : Window, IDisposable
         }
         if (book == null) return;
 
+        // The ticks changed while prices were loading: the result no longer matches the list, so it is not shown.
+        if (buildExclusions != null && !buildExclusions.SetEquals(session.ExportExclusions()))
+        {
+            progressText = TicksChangedText;
+            return;
+        }
+
         try
         {
             host.ShowResults(key, title, book, options ?? Array.Empty<PlanOption>());
@@ -1199,7 +1269,7 @@ public sealed class ListWindow : Window, IDisposable
         {
             log.Error(ex, "Opening the results window for {Key} failed", key);
             progressText = string.Empty;
-            errorText = "Could not open the shopping list window: " + ex.Message;
+            errorText = "Could not open the results window: " + ex.Message;
         }
     }
 

@@ -42,6 +42,7 @@ public sealed class HouseVisitGate
         if (!ready)
         {
             // A house that is (re)loading must show the same contents twice again before anything is filed.
+            Confirmed = false;
             _lastPlaces = null;
             return false;
         }

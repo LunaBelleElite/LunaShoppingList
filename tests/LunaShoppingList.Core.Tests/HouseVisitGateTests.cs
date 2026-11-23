@@ -138,6 +138,19 @@ public class HouseVisitGateTests
     }
 
     [Fact]
+    public void NotReadyAfterConfirmationNeedsTwoMatchingReadsAgain()
+    {
+        var g = Confirmed();
+        Assert.False(g.ShouldRead(1, false, 4_000));
+        Assert.False(g.Confirmed);
+        Assert.True(g.ShouldRead(1, true, 6_000));
+        Assert.False(g.Offer(Pl(A, Empty), 6_000));
+        Assert.True(g.ShouldRead(1, true, 7_000));
+        Assert.True(g.Offer(Pl(A, Empty), 7_000));
+        Assert.True(g.Confirmed);
+    }
+
+    [Fact]
     public void NotReadyAtTheEndOfTheSettleTimeDoesNotRead()
     {
         var g = Opened(0);

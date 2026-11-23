@@ -20,27 +20,49 @@ public sealed class LuminaRecipeData : IRecipeData, IRecipeLookup
         recipeByResult = new Lazy<Dictionary<uint, uint>>(BuildResultIndex, LazyThreadSafetyMode.PublicationOnly);
     }
 
-    /// <summary>True once the item-to-recipe index exists, so <see cref="FindRecipeForItem"/> is a dictionary lookup.</summary>
-    internal bool IsResultIndexReady => recipeByResult.IsValueCreated;
+    /// <summary>
+    /// True once the item-to-recipe index exists, so <see cref="FindRecipeForItem"/> is a dictionary lookup. While it does not,
+    /// reading this starts the background build or its next attempt (paced and capped, see <see cref="WarmUp"/>), so a window
+    /// that asks every frame is what drives the retries; it never waits for the build.
+    /// </summary>
+    internal bool IsResultIndexReady
+    {
+        get
+        {
+            if (recipeByResult.IsValueCreated)
+                return true;
+            WarmUp();
+            return false;
+        }
+    }
 
     private readonly object warmUpGate = new();
     private Task? warmUp;
     private volatile bool resultIndexFailed;
 
-    /// <summary>True after a warm-up failed, until a later attempt starts. A failure is logged once per attempt.</summary>
+    internal const int MaxAttempts = 3;
+    private const long RetryDelayMs = 10_000;
+    private int attempts;
+    private long lastStartedAt;
+
+    /// <summary>True once the build failed <see cref="MaxAttempts"/> times in a row; stays set until <see cref="RetryNow"/>.</summary>
     internal bool IsResultIndexFailed => resultIndexFailed;
 
     /// <summary>
-    /// Builds the item-to-recipe index on the thread pool unless it exists or is already being built, so no game
-    /// thread waits for it. A failed build is not remembered; a later call starts it again.
+    /// Builds the item-to-recipe index on the thread pool unless it exists, is already being built, has failed for good, or the
+    /// last attempt started less than ten seconds ago, so no game thread waits for it. At most <see cref="MaxAttempts"/> attempts.
     /// </summary>
     internal void WarmUp()
     {
         lock (warmUpGate)
         {
-            if (recipeByResult.IsValueCreated || warmUp is { IsCompleted: false })
+            if (recipeByResult.IsValueCreated || resultIndexFailed || warmUp is { IsCompleted: false })
                 return;
-            resultIndexFailed = false;
+            if (attempts > 0 && Environment.TickCount64 - lastStartedAt < RetryDelayMs)
+                return;
+            attempts++;
+            lastStartedAt = Environment.TickCount64;
+            var attempt = attempts;
             warmUp = Task.Run(() =>
             {
                 try
@@ -49,12 +71,32 @@ public sealed class LuminaRecipeData : IRecipeData, IRecipeLookup
                 }
                 catch (Exception ex)
                 {
-                    // The index stays unbuilt and a later WarmUp tries again; the windows show the failure meanwhile.
-                    resultIndexFailed = true;
-                    log?.Error(ex, "Could not build the recipe index");
+                    if (attempt >= MaxAttempts)
+                    {
+                        resultIndexFailed = true;
+                        log?.Error(ex, "Could not build the recipe index after {Attempts} attempts", attempt);
+                    }
+                    else
+                    {
+                        log?.Warning(ex, "Could not build the recipe index (attempt {Attempt} of {Max}); it will be tried again", attempt, MaxAttempts);
+                    }
                 }
             });
         }
+    }
+
+    /// <summary>An explicit user request (Reload list, the crafted button): forgets a final failure and starts the attempts over, then warms up.</summary>
+    internal void RetryNow()
+    {
+        lock (warmUpGate)
+        {
+            if (resultIndexFailed)
+            {
+                resultIndexFailed = false;
+                attempts = 0;
+            }
+        }
+        WarmUp();
     }
 
     /// <summary>

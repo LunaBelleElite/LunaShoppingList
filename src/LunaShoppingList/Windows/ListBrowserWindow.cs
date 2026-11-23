@@ -14,7 +14,15 @@ public sealed class ListBrowserWindow : Window
     private const string UnreadableConfigText = "Couldn't read Artisan's config, try again in a moment.";
     private const string LoadingNamesText = "Loading item names...";
     private const string ImportHelpText = "Paste a Teamcraft import link, an Artisan list copied with Export List, or lines like 3x Iron Ore.";
-    private const string BreakdownTooltip = "Replaces each craftable item with the materials needed to make it, like Add with subcrafts. Items that can't be crafted stay as they are.";
+    private const string BreakdownTooltip = "Replaces each craftable item with its raw materials. Items that cannot be crafted stay as they are.";
+    private const string TypeNameFirstText = "Type a name first.";
+    private const string PickItemFirstText = "Pick an item from the results first.";
+    private const string AddItemFirstText = "Add an item first.";
+    private const string ParseFirstText = "Parse some text first.";
+    private const string OpenTeamcraftTooltip = "Opens Teamcraft in your browser with the craftable items.";
+    private const string CopyForArtisanTooltip = "Copies the list for Artisan's import. Only craftable items.";
+    private const string ConfirmDeleteText = "Confirm delete";
+    private const string UntickLabel = "Untick crafted items when a list opens";
     private const string ChooseListFirstText = "Choose a list first.";
     private const string ArtisanAlreadyText = "This list is already in Artisan.";
     private const string NothingToExportText = "Nothing to export: the list is empty.";
@@ -31,9 +39,9 @@ public sealed class ListBrowserWindow : Window
     private const string GoalsNoteText = "The materials for these goals are added to the shopping list automatically.";
     private const string RecipesLoadingText = "Recipe data is still loading...";
     private const string RecipesFailedText = "Recipe data could not be loaded. Check /xllog, then try again.";
-    private const string TeamcraftLinkHintText = "Share Teamcraft list copies a link to send to someone else. They should open it as a website (paste it into the browser's address bar), not try to import it in Teamcraft's import dialog.";
+    private const string TeamcraftLinkHintText = "Copy Teamcraft link copies a link to send to someone else. They should open it as a website (paste it into the browser's address bar), not try to import it in Teamcraft's import dialog.";
     private const string ShareTeamcraftTooltip = "Copies the Teamcraft link so you can send it to another person. They open it as a website; it does not work in Teamcraft's own import dialog. To use it yourself, press Open in Teamcraft instead.";
-    private const string ExcludeCraftedTooltip = "When on, Artisan lists open with crafted ingredients (anything that has a recipe) unticked, so you only buy the raw materials. Your own ticks still win.";
+    private const string ExcludeCraftedTooltip = "When a list opens, ingredients that can be crafted start unticked, on top of your saved ticks. Crystals, shards and clusters are never touched.";
     private const string NotCraftableText = "This item cannot be crafted";
     // The text boxes count UTF-8 bytes; the 60-character name limit itself is checked when the name is used.
     private const int NameBoxMaxBytes = CustomListOps.MaxNameLength * 4;
@@ -79,6 +87,8 @@ public sealed class ListBrowserWindow : Window
     private string newListName = string.Empty;
     private string? selectedListId;
     private bool renaming;
+    // Set when renaming starts, so the next frame puts the cursor in the name box.
+    private bool focusRename;
     private string renameText = string.Empty;
     private bool deletePending;
     private string searchText = string.Empty;
@@ -292,12 +302,12 @@ public sealed class ListBrowserWindow : Window
         if (lists.Count == 0)
         {
             ImGui.TextWrapped(hiddenCount > 0
-                ? $"Artisan has no saved lists of yours. {hiddenCount} lists are hidden (not in Artisan's saved config); to use a premade list, paste its ingredients."
+                ? $"Artisan has no saved lists of yours. {Plural.Of(hiddenCount, "list")} {(hiddenCount == 1 ? "is" : "are")} hidden (not in Artisan's saved config); to use a premade list, paste its ingredients."
                 : NoListsText);
         }
         else
         {
-            var footer = ImGui.GetFrameHeightWithSpacing() + (hiddenCount > 0 ? ImGui.GetTextLineHeightWithSpacing() * 3 : 0);
+            var footer = ImGui.GetFrameHeightWithSpacing() * (UntickRowWraps() ? 2 : 1) + (hiddenCount > 0 ? ImGui.GetTextLineHeightWithSpacing() * 3 : 0);
             var height = Math.Max(ImGui.GetTextLineHeightWithSpacing() * 4, ImGui.GetContentRegionAvail().Y - footer);
             // EndChild is called whatever BeginChild returned.
             try
@@ -321,10 +331,15 @@ public sealed class ListBrowserWindow : Window
             }
         }
 
-        if (ImGui.Button("Refresh")) RefreshLists();
-        ImGui.SameLine();
+        var wraps = UntickRowWraps();
+        if (ImGui.Button("Refresh lists")) RefreshLists();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Reads Artisan's saved lists again.");
+        // The checkbox goes on the same line only when it fits; otherwise it wraps instead of being clipped.
+        if (!wraps)
+            ImGui.SameLine();
         var excludeCrafted = config.ExcludeCraftedItems;
-        if (ImGui.Checkbox("Exclude crafted items", ref excludeCrafted))
+        if (ImGui.Checkbox(UntickLabel, ref excludeCrafted))
         {
             config.ExcludeCraftedItems = excludeCrafted;
             config.Save();
@@ -336,13 +351,21 @@ public sealed class ListBrowserWindow : Window
             ImGui.PushTextWrapPos(0f);
             try
             {
-                ImGui.TextDisabled($"{hiddenCount} lists are hidden: lists that are not in Artisan's saved config (premade lists, or lists not saved yet). To use one, paste its ingredients.");
+                ImGui.TextDisabled($"{Plural.Of(hiddenCount, "list")} {(hiddenCount == 1 ? "is" : "are")} hidden: lists that are not in Artisan's saved config (premade lists, or lists not saved yet). To use {(hiddenCount == 1 ? "it" : "one")}, paste its ingredients.");
             }
             finally
             {
                 ImGui.PopTextWrapPos();
             }
         }
+    }
+
+    /// <summary>True when the Refresh lists button and the untick checkbox do not fit on one line at the current width.</summary>
+    private static bool UntickRowWraps()
+    {
+        var style = ImGui.GetStyle();
+        var checkboxWidth = ImGui.GetFrameHeight() + style.ItemInnerSpacing.X + ImGui.CalcTextSize(UntickLabel).X;
+        return ButtonWidth("Refresh lists") + style.ItemSpacing.X + checkboxWidth > ImGui.GetContentRegionAvail().X;
     }
 
     private void RefreshLists()
@@ -397,9 +420,23 @@ public sealed class ListBrowserWindow : Window
     {
         var style = ImGui.GetStyle();
         ImGui.SetNextItemWidth(Math.Max(60f, ImGui.GetContentRegionAvail().X - ButtonWidth("Create") - style.ItemSpacing.X));
-        ImGui.InputTextWithHint("##newListName", "Name your list...", ref newListName, NameBoxMaxBytes);
+        // Enter creates the list, like pressing Create.
+        var enter = ImGui.InputTextWithHint("##newListName", "Name your list...", ref newListName, NameBoxMaxBytes, ImGuiInputTextFlags.EnterReturnsTrue);
         ImGui.SameLine();
-        if (ImGui.Button("Create"))
+        var blank = string.IsNullOrWhiteSpace(newListName);
+        ImGui.BeginDisabled(blank);
+        var create = false;
+        try
+        {
+            create = ImGui.Button("Create");
+        }
+        finally
+        {
+            ImGui.EndDisabled();
+        }
+        if (blank && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(TypeNameFirstText);
+        if ((create || enter) && !blank)
             CreateList();
     }
 
@@ -458,7 +495,8 @@ public sealed class ListBrowserWindow : Window
             ImGui.TextUnformatted(list.Name);
 
         var avail = ImGui.GetContentRegionAvail().X;
-        ImGui.BeginDisabled(list.Items.Count == 0 && list.Goals.Count == 0);
+        var emptyList = list.Items.Count == 0 && list.Goals.Count == 0;
+        ImGui.BeginDisabled(emptyList);
         try
         {
             if (ImGui.Button("Shop for this list"))
@@ -468,6 +506,8 @@ public sealed class ListBrowserWindow : Window
         {
             ImGui.EndDisabled();
         }
+        if (emptyList && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(AddItemFirstText);
         var used = ButtonWidth("Shop for this list");
 
         if (!renaming)
@@ -477,14 +517,15 @@ public sealed class ListBrowserWindow : Window
             {
                 deletePending = false;
                 renaming = true;
+                focusRename = true;
                 renameText = list.Name;
             }
         }
 
         // Two-step delete: the first click arms it, a second click on the same button deletes, any other click cancels.
-        var deleteText = deletePending ? "Click again to delete" : "Delete";
-        NextInRow(ref used, avail, deleteText);
-        var deleteClicked = ImGui.Button(deletePending ? "Click again to delete###delete" : "Delete###delete");
+        // Measured with the longer label in both states, so the button never moves to a new line when it is armed.
+        NextInRow(ref used, avail, ConfirmDeleteText);
+        var deleteClicked = ImGui.Button(deletePending ? ConfirmDeleteText + "###delete" : "Delete###delete");
         var deleteHovered = ImGui.IsItemHovered();
         if (deleteClicked)
         {
@@ -505,9 +546,28 @@ public sealed class ListBrowserWindow : Window
         var style = ImGui.GetStyle();
         var buttons = ButtonWidth("Save") + ButtonWidth("Cancel") + style.ItemSpacing.X * 2;
         ImGui.SetNextItemWidth(Math.Max(60f, ImGui.GetContentRegionAvail().X - buttons));
-        ImGui.InputText("##rename", ref renameText, NameBoxMaxBytes);
+        if (focusRename)
+        {
+            ImGui.SetKeyboardFocusHere();
+            focusRename = false;
+        }
+        // Enter saves, like pressing Save.
+        var enter = ImGui.InputText("##rename", ref renameText, NameBoxMaxBytes, ImGuiInputTextFlags.EnterReturnsTrue);
         ImGui.SameLine();
-        if (ImGui.Button("Save"))
+        var blank = string.IsNullOrWhiteSpace(renameText);
+        ImGui.BeginDisabled(blank);
+        var save = false;
+        try
+        {
+            save = ImGui.Button("Save");
+        }
+        finally
+        {
+            ImGui.EndDisabled();
+        }
+        if (blank && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(TypeNameFirstText);
+        if ((save || enter) && !blank)
             SaveRename(list);
         ImGui.SameLine();
         if (ImGui.Button("Cancel"))
@@ -568,9 +628,9 @@ public sealed class ListBrowserWindow : Window
         var subLabel = "Add with subcrafts";
         // Measured before the row is drawn: once a widget is drawn the cursor has moved on.
         var lineAvail = ImGui.GetContentRegionAvail().X;
-        var quantityWidth = ImGui.CalcTextSize("Quantity").X;
+        var quantityWidth = ImGui.CalcTextSize("Qty").X;
         ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted("Quantity");
+        ImGui.TextUnformatted("Qty");
         ImGui.SameLine();
         var rest = lineAvail - quantityWidth - ButtonWidth("Add") - ButtonWidth(subLabel) - style.ItemSpacing.X * 3;
         var boxWidth = Math.Clamp(rest, 60f, 160f);
@@ -591,6 +651,8 @@ public sealed class ListBrowserWindow : Window
         {
             ImGui.EndDisabled();
         }
+        if (pickedItemId == 0 && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(PickItemFirstText);
 
         // On a narrow window the second button wraps to the next line instead of being clipped.
         var used = quantityWidth + style.ItemSpacing.X + boxWidth + style.ItemSpacing.X + ButtonWidth("Add");
@@ -606,8 +668,8 @@ public sealed class ListBrowserWindow : Window
         {
             ImGui.EndDisabled();
         }
-        if (pickedItemId != 0 && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip(craftable == false ? NotCraftableText : AddWithSubcraftsTooltip);
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(pickedItemId == 0 ? PickItemFirstText : craftable == false ? NotCraftableText : AddWithSubcraftsTooltip);
     }
 
     private void DrawListItems(CustomList list)
@@ -720,7 +782,12 @@ public sealed class ListBrowserWindow : Window
                 PushWrappedDim(RecipesFailedText);
                 // The failed build is not retried every frame: a click here, or the next goal edit, starts it again.
                 if (ImGui.SmallButton("Try again##recipesRetry"))
+                {
+                    // The retry guard gives up after three attempts, so an explicit click restarts it.
+                    if (recipes is LuminaRecipeData retryData)
+                        retryData.RetryNow();
                     InvalidateMaterials();
+                }
             }
             else
             {
@@ -1179,9 +1246,11 @@ public sealed class ListBrowserWindow : Window
         if ((importParsed || messageFromParse) && !string.Equals(pasteText, parsedFromText, StringComparison.Ordinal))
             ResetParsed();
 
+        var ioAvail = ImGui.GetContentRegionAvail().X;
         if (ImGui.Button("Paste from clipboard"))
             PasteFromClipboard();
-        ImGui.SameLine();
+        var ioUsed = ButtonWidth("Paste from clipboard");
+        NextInRow(ref ioUsed, ioAvail, "Parse");
 
         // The name index takes a while to build; never build it on the draw thread.
         var namesReady = items is not LuminaItemInfo lumina || lumina.IsNameIndexReady;
@@ -1194,6 +1263,8 @@ public sealed class ListBrowserWindow : Window
         {
             ImGui.EndDisabled();
         }
+        if (!namesReady && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(LoadingNamesText);
         if (!namesReady)
         {
             ImGui.SameLine();
@@ -1234,17 +1305,32 @@ public sealed class ListBrowserWindow : Window
                 ImGui.SetTooltip(BreakdownTooltip);
         }
 
-        ImGui.BeginDisabled(parsed.Count == 0);
+        var nothingParsed = parsed.Count == 0;
+        var saveAvail = ImGui.GetContentRegionAvail().X;
+        ImGui.BeginDisabled(nothingParsed);
         try
         {
             if (ImGui.Button("Save as shopping list")) SaveImported();
-            ImGui.SameLine();
+        }
+        finally
+        {
+            ImGui.EndDisabled();
+        }
+        if (nothingParsed && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(ParseFirstText);
+        var saveUsed = ButtonWidth("Save as shopping list");
+        NextInRow(ref saveUsed, saveAvail, "Open without saving");
+        ImGui.BeginDisabled(nothingParsed);
+        try
+        {
             if (ImGui.Button("Open without saving")) OpenParsed();
         }
         finally
         {
             ImGui.EndDisabled();
         }
+        if (nothingParsed && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(ParseFirstText);
         DrawIoMessages(true);
     }
 
@@ -1382,6 +1468,8 @@ public sealed class ListBrowserWindow : Window
         var selected = exportCustomId != null || exportArtisanId != null;
         var isArtisan = exportArtisanId != null;
 
+        // Buttons wrap to a new line instead of being clipped at the default width.
+        var exportAvail = ImGui.GetContentRegionAvail().X;
         ImGui.BeginDisabled(!selected);
         try
         {
@@ -1391,36 +1479,35 @@ public sealed class ListBrowserWindow : Window
         {
             ImGui.EndDisabled();
         }
-        if (!selected && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip(ChooseListFirstText);
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(selected ? OpenTeamcraftTooltip : ChooseListFirstText);
+        var exportUsed = ButtonWidth("Open in Teamcraft");
 
-        ImGui.SameLine();
-        ImGui.BeginDisabled(!selected || isArtisan);
-        try
-        {
-            if (ImGui.Button("Copy Artisan list")) CopyArtisanList();
-        }
-        finally
-        {
-            ImGui.EndDisabled();
-        }
-        if ((!selected || isArtisan) && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip(isArtisan ? ArtisanAlreadyText : ChooseListFirstText);
-
-        ImGui.SameLine();
+        NextInRow(ref exportUsed, exportAvail, "Copy Teamcraft link");
         ImGui.BeginDisabled(!selected);
         try
         {
-            if (ImGui.Button("Share Teamcraft list")) CopyTeamcraftLink();
+            if (ImGui.Button("Copy Teamcraft link")) CopyTeamcraftLink();
         }
         finally
         {
             ImGui.EndDisabled();
         }
-        if (!selected && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip(ChooseListFirstText);
-        else if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(ShareTeamcraftTooltip);
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(selected ? ShareTeamcraftTooltip : ChooseListFirstText);
+
+        NextInRow(ref exportUsed, exportAvail, "Copy for Artisan");
+        ImGui.BeginDisabled(!selected || isArtisan);
+        try
+        {
+            if (ImGui.Button("Copy for Artisan")) CopyArtisanList();
+        }
+        finally
+        {
+            ImGui.EndDisabled();
+        }
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(isArtisan ? ArtisanAlreadyText : !selected ? ChooseListFirstText : CopyForArtisanTooltip);
 
         ImGui.PushTextWrapPos(0f);
         try

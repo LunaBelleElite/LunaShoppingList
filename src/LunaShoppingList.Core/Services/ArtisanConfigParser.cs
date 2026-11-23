@@ -8,7 +8,9 @@ public static class ArtisanConfigParser
     /// <summary>Parses all lists found in the config JSON.</summary>
     /// <param name="json">Artisan config file text.</param>
     /// <returns>The crafting lists, in file order. Lists without a usable ID and items without a usable
-    /// ID or a positive Quantity are skipped.</returns>
+    /// ID or a positive Quantity are skipped. A lone UTF-16 surrogate in the text never throws: a raw one is read as
+    /// U+FFFD (so a list name keeps its other characters), and a name holding an escaped one (<c>\ud800</c>), which cannot be
+    /// read as text at all, comes back as an empty name; the list's recipes are still read.</returns>
     /// <exception cref="InvalidDataException">The text is not valid JSON, is not an object, or has no usable
     /// <c>NewCraftingLists</c> collection.</exception>
     public static IReadOnlyList<CraftingList> ParseLists(string json)
@@ -25,6 +27,18 @@ public static class ArtisanConfigParser
         catch (JsonException ex)
         {
             throw new InvalidDataException("Artisan config is not valid JSON: " + ex.Message, ex);
+        }
+        catch (ArgumentException)
+        {
+            // Raw lone surrogate(s) in the text: not encodable as UTF-8. Read it again with each one replaced by U+FFFD.
+            try
+            {
+                doc = JsonDocument.Parse(ReplaceLoneSurrogates(json), options);
+            }
+            catch (Exception e) when (e is JsonException or ArgumentException)
+            {
+                throw new InvalidDataException("Artisan config is not valid JSON: " + e.Message, e);
+            }
         }
 
         using (doc)
@@ -48,7 +62,7 @@ public static class ArtisanConfigParser
                     continue;
 
                 var name = listElement.TryGetProperty("Name", out var nameElement) && nameElement.ValueKind == JsonValueKind.String
-                    ? nameElement.GetString() ?? string.Empty
+                    ? ReadName(nameElement)
                     : string.Empty;
 
                 var items = new List<CraftItem>();
@@ -67,6 +81,30 @@ public static class ArtisanConfigParser
 
             return result;
         }
+    }
+
+    /// <summary>The name; empty when it holds an escaped lone surrogate and cannot be read as text.</summary>
+    private static string ReadName(JsonElement element)
+    {
+        try
+        {
+            return element.GetString() ?? string.Empty;
+        }
+        catch (InvalidOperationException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string ReplaceLoneSurrogates(string text)
+    {
+        var chars = text.ToCharArray();
+        for (var i = 0; i < chars.Length; i++)
+        {
+            if (char.IsHighSurrogate(chars[i]) && i + 1 < chars.Length && char.IsLowSurrogate(chars[i + 1])) i++;
+            else if (char.IsSurrogate(chars[i])) chars[i] = (char)0xFFFD;
+        }
+        return new string(chars);
     }
 
     private static CraftItem? ParseItem(JsonElement recipe)

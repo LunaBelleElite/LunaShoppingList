@@ -53,7 +53,17 @@ public sealed class Configuration : IPluginConfiguration
     internal void OnDeserialized(StreamingContext context)
     {
         CustomListOps.Normalize(customLists);
+        ExcludedItemsByList ??= new();
         IncludedItemsByList ??= new();
+        DropNullSets(ExcludedItemsByList);
+        DropNullSets(IncludedItemsByList);
+    }
+
+    // A null inner set would reach session.LoadFromList and throw; an absent entry means the same as an empty one.
+    private static void DropNullSets(Dictionary<int, HashSet<uint>> map)
+    {
+        foreach (var id in map.Where(kv => kv.Value is null).Select(kv => kv.Key).ToList())
+            map.Remove(id);
     }
 
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);

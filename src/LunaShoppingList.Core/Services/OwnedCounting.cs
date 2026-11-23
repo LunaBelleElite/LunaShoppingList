@@ -138,6 +138,7 @@ public sealed class RetainerVisitGate
         if (!ready)
         {
             // A retainer that is (re)loading must show the same contents twice again before anything is filed.
+            Confirmed = false;
             ForgetSample();
             return false;
         }
