@@ -47,6 +47,20 @@ public static class OwnedCounting
         return true;
     }
 
+    /// <summary>Whether both hold the same counts in every house place (a missing place equals an empty one). A <c>null</c> <paramref name="a"/> is never the same as anything.</summary>
+    public static bool SameHousePlaces(IReadOnlyDictionary<HousePlace, IReadOnlyDictionary<uint, int>>? a, IReadOnlyDictionary<HousePlace, IReadOnlyDictionary<uint, int>> b)
+    {
+        ArgumentNullException.ThrowIfNull(b);
+        if (a is null)
+            return false;
+        foreach (var place in a.Keys.Union(b.Keys))
+        {
+            if (!SameCounts(a.TryGetValue(place, out var x) ? x : NoCounts, b.TryGetValue(place, out var y) ? y : NoCounts))
+                return false;
+        }
+        return true;
+    }
+
     private static readonly IReadOnlyDictionary<uint, int> NoCounts = new Dictionary<uint, int>();
 
     /// <summary>
@@ -72,6 +86,8 @@ public static class OwnedCounting
             copy.ReplaceSaddlebag(s.CapturedUtc, s.Items);
         foreach (var r in source.Retainers)
             CopyRetainer(copy, r, r.CapturedUtc);
+        foreach (var h in source.Houses)
+            copy.ReplaceHouse(h.Id, h.Label, h.CapturedUtc, h.Places);
         return copy;
     }
 }

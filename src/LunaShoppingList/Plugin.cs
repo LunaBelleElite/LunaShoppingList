@@ -20,6 +20,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IFramework Framework { get; private set; } = null!;
     [PluginService] internal static IGameInventory GameInventory { get; private set; } = null!;
     [PluginService] internal static IGameGui GameGui { get; private set; } = null!;
+    [PluginService] internal static ICondition Condition { get; private set; } = null!;
 
     private const string CommandName = "/lsl";
 
@@ -36,6 +37,7 @@ public sealed class Plugin : IDalamudPlugin
     internal HttpClientGetter HttpGetter { get; }
     internal ShoppingListService ShoppingService { get; }
     internal OwnedItemsService OwnedItems { get; }
+    internal LifestreamService Lifestream { get; }
     private readonly DiagnosticDump diagnosticDump;
 
     public Plugin()
@@ -54,11 +56,12 @@ public sealed class Plugin : IDalamudPlugin
         var universalis = new UniversalisClient(HttpGetter, TimeSpan.FromMinutes(10), () => DateTimeOffset.UtcNow);
         // Items not sold on the market board are never sent to Universalis; until the item index is built every item counts as marketable.
         ShoppingService = new ShoppingListService(WorldData, universalis, ItemInfo.IsMarketable);
-        OwnedItems = new OwnedItemsService(PluginInterface, Framework, GameInventory, GameGui, PlayerState, Log);
+        OwnedItems = new OwnedItemsService(PluginInterface, Framework, GameInventory, GameGui, PlayerState, Condition, Log);
+        Lifestream = new LifestreamService(PluginInterface, Log);
         diagnosticDump = new DiagnosticDump(DataManager, PlayerState, Log, ChatGui, ArtisanLists, ItemInfo);
 
         Windows = new WindowManager(WindowSystem, Configuration, ArtisanLists, ItemInfo, RecipeData, WorldData, ShoppingService,
-            new MaterialsCalculator(RecipeData), OwnedItems, ItemSources, Log);
+            new MaterialsCalculator(RecipeData), OwnedItems, Lifestream, ItemSources, Log);
         Browser = new ListBrowserWindow(Configuration, ArtisanLists, ItemInfo, ItemInfo, RecipeData, RecipeData, Windows, Log);
         WindowSystem.AddWindow(Browser);
 

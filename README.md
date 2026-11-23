@@ -11,8 +11,9 @@ decide, it will suggest a plan, and the route and totals keep up as you change
 quantities. The ingredient list also shows how many of each item you already
 hold. It can also bring in a Teamcraft list and send one back out.
 
-It doesn't travel for you and it doesn't buy anything. It tells you where to
-go. The walking is yours.
+It never travels on its own and it doesn't buy anything. It tells you where to
+go. If you have Lifestream, clicking a world name asks it to take you there.
+The shopping is yours.
 
 I use it for my own crafting in the game, and I fix bugs as I run into them. If
 you hit one, open an issue on this repository and say what you did.
@@ -86,10 +87,13 @@ one out.
   from a main-city aetheryte, which is your region. **Cross data center** covers
   everywhere, and other regions need Data Center Travel.
 - Untick **Buy** on anything you don't need. **Check/uncheck all** ticks or
-  unticks every row at once. **Toggle all crystals/shards/clusters** does the same
-  for just those. Your choices are remembered for Artisan and My shopping lists.
+  unticks every row at once. Your choices are remembered for Artisan and My shopping lists.
 - **Exclude items I have enough of** unticks every row where what you hold
   already covers the quantity. A row whose count isn't known yet stays ticked.
+  It doesn't count your houses.
+- **Exclude items in my house** unticks every row your house already covers,
+  even one you ticked by hand. A row whose house count isn't known yet stays
+  ticked.
 - **Exclude crafted items** unticks every craftable ingredient, so only raw
   materials stay ticked. Crystals, shards and clusters are left alone, and it
   also unticks ones you ticked by hand. If recipe data is still loading, it
@@ -97,7 +101,8 @@ one out.
 - Click a column header to sort by it, and click again to reverse it. Sorting
   isn't saved, so closing the window puts the rows back in the list's own order.
 - **On you** and **Retainers** show how many you already hold. Hover Retainers
-  to see which retainer has it. The **Vendor** column shows when an NPC also
+  to see which retainer has it. **House** counts furniture placed in your house
+  and its storeroom, and hovering it lists each house. The **Vendor** column shows when an NPC also
   sells the item. Hover it for the vendor and where they stand. An item nothing
   sells shows **Craftable** there, and one that has a vendor and can also be
   crafted adds (craftable) after the vendor text. Columns start
@@ -121,12 +126,20 @@ one out.
   plan was edited by hand.
 - The route lists each world with what to buy there. Click an item's name and
   it's copied, so you can paste it into the market board search.
+- Click a world name, in the route or in an expanded item, to ask Lifestream to
+  take you there. It only asks when you click. The note under the Route title
+  says Lifestream was asked, and Lifestream shows its own message if it can't go.
 - Press Build shopping list again in the list window and the prices refresh. Your quantity
   changes are reset, but the budget stays.
 
 ## What it won't do
 
-It won't travel or buy for you. It plans, and you do the shopping.
+It won't travel on its own or buy for you. It plans, and you do the shopping.
+A click on a world name only asks Lifestream to go.
+
+It can only read your house while the Furnishings window is open and you are
+inside it, so it remembers each house as of your last visit and you open
+Furnishings once in each. The yard and the outdoor storeroom aren't counted.
 
 It doesn't knock what you already own off the bill by itself. Building still prices
 the full quantity, whatever **On you** and **Retainers** say. Those columns are
@@ -164,7 +177,10 @@ the better-trodden direction. The same goes for the any-order search, the market
 board note, the sortable column headers, the Exclude items I have enough of button,
 the collapsed item list, the Exclude crafted items checkbox, Check/uncheck all, removing goals, old lists still loading after an
 update, the stale-listing marker, the short-by and over-by notes, Reload list,
-closing windows with Esc or a gamepad, and updating the plugin. If any of those
+closing windows with Esc or a gamepad, and updating the plugin. The newest
+ones are the House column, Exclude items in my house, clicking a world name to
+ask Lifestream (including whether it collapses an open item), and the buttons
+wrapping in a narrow window. If any of those
 misbehaves, I'd like to hear about it.
 
 ## Why the numbers can be a little off
@@ -183,6 +199,8 @@ shown.
 - Final Fantasy XIV on the global client, with Dalamud. It's built for Dalamud
   API level 15.
 - The Artisan plugin loaded, to pick a crafting list.
+- Lifestream, only if you want world names to be clickable. Everything else
+  works without it.
 - An internet connection, because the prices come from Universalis.
 
 ## Licence and credits

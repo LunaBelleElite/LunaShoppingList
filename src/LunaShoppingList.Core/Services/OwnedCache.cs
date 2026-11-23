@@ -18,15 +18,24 @@ public sealed class OwnedCache
 
     private static readonly Dictionary<string, RetainerPlace> PlaceNames = Enum.GetValues<RetainerPlace>().ToDictionary(p => p.ToString());
 
+    private static readonly Dictionary<string, HousePlace> HousePlaceNames = Enum.GetValues<HousePlace>().ToDictionary(p => p.ToString());
+
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
     private readonly Dictionary<ulong, RetainerSnapshot> _retainers = new();
+    private readonly Dictionary<ulong, HouseSnapshot> _houses = new();
 
     /// <summary>The saddlebag as last captured; <c>null</c> if it never was.</summary>
     public SaddlebagSnapshot? Saddlebag { get; private set; }
 
     /// <summary>Every retainer snapshot, ordered by retainer id.</summary>
     public IReadOnlyList<RetainerSnapshot> Retainers => _retainers.Values.OrderBy(r => r.Id).ToList();
+
+    /// <summary>Every house snapshot, ordered by house id.</summary>
+    public IReadOnlyList<HouseSnapshot> Houses => _houses.Values.OrderBy(h => h.Id).ToList();
+
+    /// <summary>How many houses have been captured.</summary>
+    public int HouseCount => _houses.Count;
 
     /// <summary>How many retainers have been captured.</summary>
     public int RetainerCount => _retainers.Count;
@@ -86,6 +95,40 @@ public sealed class OwnedCache
         _retainers[id] = new RetainerSnapshot(id, name ?? "", capturedUtc.ToUniversalTime(), Positive(stored), Positive(market), placed);
     }
 
+    /// <summary>
+    /// Records what house <paramref name="id"/> held when its Furnishings window was open, place by place, replacing its old snapshot
+    /// completely (a recapture of identical contents is stored again, with the new time, like <c>ReplaceRetainer</c>). Non-positive counts
+    /// and empty places are dropped.
+    /// </summary>
+    public void ReplaceHouse(ulong id, string label, DateTimeOffset capturedUtc, IReadOnlyDictionary<HousePlace, IReadOnlyDictionary<uint, int>> places)
+    {
+        ArgumentNullException.ThrowIfNull(places);
+        var placed = new SortedDictionary<HousePlace, IReadOnlyDictionary<uint, int>>();
+        foreach (var (place, counts) in places)
+        {
+            if (!Enum.IsDefined(place) || counts is null)
+                continue;
+            var positive = Positive(counts);
+            if (positive.Count > 0)
+                placed[place] = positive;
+        }
+        _houses[id] = new HouseSnapshot(id, label ?? "", capturedUtc.ToUniversalTime(), placed);
+    }
+
+    /// <summary>
+    /// How many of <paramref name="itemId"/> every remembered house held, placed plus storeroom, summed in a <c>long</c>;
+    /// <c>null</c> when no house was ever captured (unknown, not zero).
+    /// </summary>
+    public long? HouseTotal(uint itemId)
+    {
+        if (_houses.Count == 0)
+            return null;
+        long total = 0;
+        foreach (var h in _houses.Values)
+            total += h.Total(itemId);
+        return total;
+    }
+
     /// <summary>Records what the saddlebag held when it was opened, replacing the old snapshot completely.</summary>
     public void ReplaceSaddlebag(DateTimeOffset capturedUtc, IEnumerable<KeyValuePair<uint, int>> counts)
     {
@@ -126,6 +169,13 @@ public sealed class OwnedCache
         {
             Version = CurrentVersion,
             Saddlebag = Saddlebag is null ? null : new SaddlebagDto { CapturedUtc = Saddlebag.CapturedUtc, Items = Sorted(Saddlebag.Items) },
+            Houses = _houses.Count == 0 ? null : Houses.Select(h => (HouseDto?)new HouseDto
+            {
+                Id = h.Id,
+                Label = h.Label,
+                CapturedUtc = h.CapturedUtc,
+                Places = new SortedDictionary<string, SortedDictionary<uint, int>?>(h.Places.ToDictionary(p => p.Key.ToString(), p => (SortedDictionary<uint, int>?)Sorted(p.Value)), StringComparer.Ordinal),
+            }).ToList(),
             Retainers = Retainers.Select(r => (RetainerDto?)new RetainerDto
             {
                 Id = r.Id,
@@ -184,6 +234,19 @@ public sealed class OwnedCache
                     loaded.ReplaceRetainer(r.Id, r.Name ?? "", r.CapturedUtc, r.Stored ?? new(), r.Market ?? new());
                 }
             }
+            foreach (var h in dto.Houses ?? new())
+            {
+                if (h is null)
+                    continue;
+                var places = new Dictionary<HousePlace, IReadOnlyDictionary<uint, int>>();
+                foreach (var (name, counts) in h.Places ?? new())
+                {
+                    // An unknown or oddly cased place name is skipped on its own: a house has no always-written sums to fall back on.
+                    if (counts is not null && HousePlaceNames.TryGetValue(name, out var place))
+                        places[place] = counts;
+                }
+                loaded.ReplaceHouse(h.Id, h.Label ?? "", h.CapturedUtc, places);
+            }
             cache = loaded;
             return true;
         }
@@ -217,6 +280,15 @@ public sealed class OwnedCache
         [JsonPropertyName("Version")] public int Version { get; set; }
         [JsonPropertyName("Saddlebag")] public SaddlebagDto? Saddlebag { get; set; }
         [JsonPropertyName("Retainers")] public List<RetainerDto?>? Retainers { get; set; }
+        [JsonPropertyName("Houses")] [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public List<HouseDto?>? Houses { get; set; }
+    }
+
+    private sealed class HouseDto
+    {
+        [JsonPropertyName("Id")] public ulong Id { get; set; }
+        [JsonPropertyName("Label")] public string? Label { get; set; }
+        [JsonPropertyName("CapturedUtc")] public DateTimeOffset CapturedUtc { get; set; }
+        [JsonPropertyName("Places")] public SortedDictionary<string, SortedDictionary<uint, int>?>? Places { get; set; }
     }
 
     private sealed class SaddlebagDto
@@ -273,7 +345,22 @@ public static class OwnedLookup
         else { retainers = null; source = RetainerSource.NotAvailable; }
 
         return new OwnedSummary(itemId, onYou, saddlebag, saddlebagAt, retainers, source, cached, ext,
-            cache.OldestRetainerCapture, cache.NewestRetainerCapture);
+            cache.OldestRetainerCapture, cache.NewestRetainerCapture, cache.HouseTotal(itemId));
+    }
+
+    /// <summary>Where each remembered house holds <paramref name="itemId"/>; only houses that hold it, largest total first, then label, then id.</summary>
+    public static IReadOnlyList<HouseLocation> HouseLocations(uint itemId, OwnedCache cache)
+    {
+        ArgumentNullException.ThrowIfNull(cache);
+        var found = new List<HouseLocation>();
+        foreach (var h in cache.Houses)
+        {
+            var total = h.Total(itemId);
+            if (total <= 0)
+                continue;
+            found.Add(new HouseLocation(h.Id, h.Label, h.CapturedUtc, h.Count(HousePlace.Placed, itemId), h.Count(HousePlace.Storeroom, itemId), total));
+        }
+        return found.OrderByDescending(l => l.Total).ThenBy(l => l.Label, StringComparer.Ordinal).ThenBy(l => l.HouseId).ToList();
     }
 
     /// <summary>Where each retainer holds <paramref name="itemId"/>.</summary>

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.Inventory;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Ipc;
@@ -13,7 +14,7 @@ namespace LunaShoppingList.Adapters;
 /// <summary>
 /// Counts what the logged-in character owns. Everything native is read on the framework thread inside
 /// <see cref="IFramework.Update"/> and copied into managed dictionaries straight away; nothing native is kept across frames.
-/// Bags and crystals are read live. The saddlebag and each retainer can only be read while open, so what they held is
+/// Bags and crystals are read live. The saddlebag, each retainer and each own house (while its Furnishings window is open) can only be read then, so what they held is
 /// remembered per character in <c>owned-&lt;content id&gt;.json</c> in the plugin's config directory. AllaganTools, when
 /// installed and tracking the same character, is asked for its retainer counts too. Results reach the draw thread as one
 /// immutable snapshot swapped atomically; the draw thread never takes a lock and never reads native memory through this class.
@@ -44,6 +45,37 @@ internal sealed unsafe class OwnedItemsService : IDisposable
 
     private static readonly GameInventoryType[] RetainerTypes = RetainerContainers.Select(c => c.Type).ToArray();
 
+    // The interior furnishing containers: furniture placed in the house, and the storeroom. The appearance containers (fixtures)
+    // and the exterior (yard) containers are deliberately not read.
+    private static readonly GameInventoryType[] HousePlacedTypes =
+    [
+        GameInventoryType.HousingInteriorPlacedItems1, GameInventoryType.HousingInteriorPlacedItems2, GameInventoryType.HousingInteriorPlacedItems3,
+        GameInventoryType.HousingInteriorPlacedItems4, GameInventoryType.HousingInteriorPlacedItems5, GameInventoryType.HousingInteriorPlacedItems6,
+        GameInventoryType.HousingInteriorPlacedItems7, GameInventoryType.HousingInteriorPlacedItems8, GameInventoryType.HousingInteriorPlacedItems9,
+        GameInventoryType.HousingInteriorPlacedItems10, GameInventoryType.HousingInteriorPlacedItems11, GameInventoryType.HousingInteriorPlacedItems12,
+    ];
+
+    private static readonly GameInventoryType[] HouseStoreroomTypes =
+    [
+        GameInventoryType.HousingInteriorStoreroom1, GameInventoryType.HousingInteriorStoreroom2, GameInventoryType.HousingInteriorStoreroom3,
+        GameInventoryType.HousingInteriorStoreroom4, GameInventoryType.HousingInteriorStoreroom5, GameInventoryType.HousingInteriorStoreroom6,
+        GameInventoryType.HousingInteriorStoreroom7, GameInventoryType.HousingInteriorStoreroom8, GameInventoryType.HousingInteriorStoreroom9,
+        GameInventoryType.HousingInteriorStoreroom10, GameInventoryType.HousingInteriorStoreroom11,
+    ];
+
+    private static readonly GameInventoryType[] HouseTypes = [.. HousePlacedTypes, .. HouseStoreroomTypes];
+
+    // The in-game Furnishings window. The house containers only hold current data while it is open, and this plugin never asks the
+    // game to fill them (no housing request is ever sent): it only reads what the window already loaded.
+    private const string FurnishingsAddon = "HousingGoods";
+
+    // The estates whose ids count as the character's own (shared estates have two slots).
+    private static readonly (EstateType Type, int Index)[] OwnedEstates =
+    [
+        (EstateType.PersonalEstate, 0), (EstateType.FreeCompanyEstate, 0), (EstateType.PersonalChambers, 0),
+        (EstateType.ApartmentRoom, 0), (EstateType.SharedEstate, 0), (EstateType.SharedEstate, 1),
+    ];
+
     // AllaganTools inventory categories: retainer bags (4), retainer market (9) and crystals (13). Crystals also cover the
     // character's own, which are left out by skipping the character's own id in the per-owner answer.
     private static readonly uint[] AllaganRetainerCategories = [4, 9, 13];
@@ -65,6 +97,7 @@ internal sealed unsafe class OwnedItemsService : IDisposable
     private readonly IGameInventory inventory;
     private readonly IGameGui gameGui;
     private readonly IPlayerState player;
+    private readonly ICondition condition;
     private readonly IPluginLog log;
     private readonly ICallGateSubscriber<bool> allaganInitialized;
     private readonly ICallGateSubscriber<ulong> allaganCurrentCharacter;
@@ -117,13 +150,20 @@ internal sealed unsafe class OwnedItemsService : IDisposable
     private bool visitCaptured;
     private DateTimeOffset visitLastVerifiedUtc;
 
-    public OwnedItemsService(IDalamudPluginInterface pi, IFramework framework, IGameInventory inventory, IGameGui gameGui, IPlayerState player, IPluginLog log)
+    // The house the character is inside, if any (0 = none), with the same visit bookkeeping as a retainer.
+    private HouseVisitGate houseGate = new();
+    private ulong houseVisitId;
+    private bool houseVisitCaptured;
+    private DateTimeOffset houseVisitLastVerifiedUtc;
+
+    public OwnedItemsService(IDalamudPluginInterface pi, IFramework framework, IGameInventory inventory, IGameGui gameGui, IPlayerState player, ICondition condition, IPluginLog log)
     {
         this.pi = pi;
         this.framework = framework;
         this.inventory = inventory;
         this.gameGui = gameGui;
         this.player = player;
+        this.condition = condition;
         this.log = log;
         allaganInitialized = pi.GetIpcSubscriber<bool>("AllaganTools.IsInitialized");
         allaganCurrentCharacter = pi.GetIpcSubscriber<ulong>("AllaganTools.CurrentCharacter");
@@ -148,6 +188,19 @@ internal sealed unsafe class OwnedItemsService : IDisposable
     {
         var s = Volatile.Read(ref snapshot);
         return (SummarizeFrom(s, itemId), OwnedLookup.Locations(itemId, s.Cache));
+    }
+
+    /// <summary>Whether any house of the current character was ever captured.</summary>
+    public bool HasAnyHouseData => Volatile.Read(ref snapshot).Cache.HouseCount > 0;
+
+    /// <summary>
+    /// <see cref="Summarize"/> plus where each remembered house holds <paramref name="itemId"/>, both from ONE read of the published
+    /// snapshot. Allocates, so call it only while a tooltip is open, never per row per frame.
+    /// </summary>
+    public (OwnedSummary Summary, IReadOnlyList<HouseLocation> Houses) SummarizeWithHouses(uint itemId)
+    {
+        var s = Volatile.Read(ref snapshot);
+        return (SummarizeFrom(s, itemId), OwnedLookup.HouseLocations(itemId, s.Cache));
     }
 
     /// <summary>
@@ -177,6 +230,7 @@ internal sealed unsafe class OwnedItemsService : IDisposable
             try
             {
                 EndVisit();
+                EndHouseVisit();
                 if (dirty || stampPending)
                     Save(Environment.TickCount64);
                 RetryPendingSaves(Environment.TickCount64);
@@ -228,6 +282,7 @@ internal sealed unsafe class OwnedItemsService : IDisposable
             return;
 
         TickRetainer(ms, now);
+        TickHouse(ms, now);
 
         if (ms >= nextLiveMs)
         {
@@ -248,6 +303,7 @@ internal sealed unsafe class OwnedItemsService : IDisposable
     {
         // Finish the old character completely before anything of the new one is read: the two are never mixed.
         EndVisit();
+        EndHouseVisit();
         if (contentId != 0 && (dirty || stampPending) && !saveBlocked && !TryWrite(contentId, working))
         {
             // Kept, not dropped: retried on the normal schedule and on unload, against that character's own file.
@@ -272,6 +328,8 @@ internal sealed unsafe class OwnedItemsService : IDisposable
         saveErrorLogged = false;
         gate = new RetainerVisitGate();
         ResetVisit(0);
+        houseGate = new HouseVisitGate();
+        ResetHouseVisit(0);
         nextLiveMs = 0;
         nextExternalRoundMs = 0;
         DropExternal();
@@ -526,6 +584,122 @@ internal sealed unsafe class OwnedItemsService : IDisposable
         {
             if (r.Id == id)
                 return r;
+        }
+        return null;
+    }
+
+    // ---- Houses ----
+
+    /// <summary>
+    /// Reads the furnishings of the character's own house while its Furnishings window is open, and files them under that house.
+    /// Read only: no housing request is ever sent. Every gate below must hold, otherwise the record stays as it was.
+    /// </summary>
+    private void TickHouse(long ms, DateTimeOffset now)
+    {
+        ulong id = 0;
+        var ready = false;
+        HouseId house = default;
+        var manager = HousingManager.Instance();
+        // Never while changing zones, and only once the housing territory itself is loaded.
+        if (!condition[ConditionFlag.BetweenAreas] && !condition[ConditionFlag.BetweenAreas51]
+            && manager != null && manager->CurrentTerritory != null && manager->CurrentTerritory->IsLoaded()
+            && manager->IsInside() && !manager->IsInWorkshop())
+        {
+            house = manager->GetCurrentIndoorHouseId();
+            if (house.Id != 0 && house.Id != ulong.MaxValue && !house.IsWorkshop)
+            {
+                id = house.Id;
+                // A friend's house is never recorded; every container must be loaded, or none is read.
+                ready = FurnishingsOpen() && IsOwnHouse(manager, id) && AllLoaded(HouseTypes);
+            }
+        }
+
+        if (id != houseVisitId)
+        {
+            EndHouseVisit();
+            ResetHouseVisit(id);
+        }
+
+        // The gate waits after every change of house and wants the same contents twice before the first capture.
+        if (!houseGate.ShouldRead(id, ready, ms))
+            return;
+
+        var places = new Dictionary<HousePlace, IReadOnlyDictionary<uint, int>>
+        {
+            [HousePlace.Placed] = Count(HousePlacedTypes),
+            [HousePlace.Storeroom] = Count(HouseStoreroomTypes),
+        };
+        if (!houseGate.Offer(places, ms))
+            return;
+
+        var existing = FindHouse(id);
+        var label = HouseLabel(house);
+        var same = existing is not null
+            && existing.Label == label
+            && OwnedCounting.SameHousePlaces(existing.Places, places);
+
+        if (!houseVisitCaptured || !same || now - existing!.CapturedUtc >= StampRefresh)
+        {
+            working.ReplaceHouse(id, label, now, places);
+            // The first capture of a visit is saved even when nothing changed, so the record says this visit happened.
+            MarkChanged(ms, contentsChanged: !houseVisitCaptured || !same);
+        }
+        houseVisitCaptured = true;
+        houseVisitLastVerifiedUtc = now;
+    }
+
+    private bool FurnishingsOpen() => gameGui.GetAddonByName(FurnishingsAddon).IsVisible;
+
+    /// <summary>The character may edit this house, or it is one of the character's own estates.</summary>
+    private static bool IsOwnHouse(HousingManager* manager, ulong id)
+    {
+        if (manager->HasHousePermissions())
+            return true;
+        foreach (var (type, index) in OwnedEstates)
+        {
+            if (HousingManager.GetOwnedHouseId(type, index).Id == id)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>"Apartment room N", "Private chamber N" or "W{ward} P{plot}" (ward and plot shown from 1).</summary>
+    private static string HouseLabel(HouseId house)
+    {
+        if (house.IsApartment)
+            return $"Apartment room {house.RoomNumber}";
+        if (house.RoomNumber > 0)
+            return $"Private chamber {house.RoomNumber}";
+        return $"W{house.WardIndex + 1} P{house.PlotIndex + 1}";
+    }
+
+    /// <summary>When the character leaves a house, its record is stamped with the last time its contents were confirmed. Reads no native memory.</summary>
+    private void EndHouseVisit()
+    {
+        if (houseVisitId == 0 || !houseVisitCaptured)
+            return;
+        var existing = FindHouse(houseVisitId);
+        if (existing is not null && existing.CapturedUtc < houseVisitLastVerifiedUtc)
+        {
+            working.ReplaceHouse(existing.Id, existing.Label, houseVisitLastVerifiedUtc, existing.Places);
+            MarkChanged(Environment.TickCount64);
+        }
+        houseVisitCaptured = false;
+    }
+
+    private void ResetHouseVisit(ulong id)
+    {
+        houseVisitId = id;
+        houseVisitCaptured = false;
+        houseVisitLastVerifiedUtc = default;
+    }
+
+    private HouseSnapshot? FindHouse(ulong id)
+    {
+        foreach (var h in working.Houses)
+        {
+            if (h.Id == id)
+                return h;
         }
         return null;
     }

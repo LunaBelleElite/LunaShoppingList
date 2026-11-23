@@ -17,7 +17,7 @@ public sealed class ListWindow : Window, IDisposable
     private const string GoalsPendingText = "Materials for the goals are not loaded yet. They will appear by themselves once recipe data has loaded.";
     private const string RecipesFailedText = "Recipe data could not be loaded. Check /xllog, then try again.";
     private const string GoalsPendingBuildTooltip = "Waiting for recipe data. The goals' materials are not loaded yet.";
-    private const string FootnoteText = "Prices are from Universalis, exclude market tax, and may be out of date. This plugin does not travel for you.";
+    private const string FootnoteText = "Prices are from Universalis, exclude market tax, and may be out of date. This plugin never travels on its own. A click on a world name only asks Lifestream to go there.";
     private const string OpenedText = "Shopping list opened in its own window.";
     private const string NotOnMarketSuffix = " (not sold on the market board)";
     private const string NoRetainerDataText = "Open each retainer once to count what they hold.";
@@ -73,7 +73,8 @@ public sealed class ListWindow : Window, IDisposable
 
     // Click-to-sort state. Per window only: not saved, gone when the window closes. Sorting changes display order only;
     // session.Requirements and rows are never reordered. Column -1 means no sort, which shows the natural order of rows.
-    private const int BuyColumn = 0, ItemColumn = 1, QuantityColumn = 2, OnYouColumn = 3, RetainersColumn = 4, VendorColumn = 5;
+    private const int BuyColumn = 0, ItemColumn = 1, QuantityColumn = 2, OnYouColumn = 3, RetainersColumn = 4, HouseColumn = 5, VendorColumn = 6;
+    private const int IngredientColumns = 7;
     private const long OwnedRefreshMs = 1000;
     private int sortColumn = -1;
     private bool sortAscending = true;
@@ -463,15 +464,7 @@ public sealed class ListWindow : Window, IDisposable
             session.SetAllIncluded(!session.AreAllIncluded);
             PersistExclusions();
         }
-        ImGui.SameLine();
-        if (ImGui.Button("Toggle all crystals/shards/clusters"))
-        {
-            session.SetCrystalsExcluded(!session.AreAllCrystalsExcluded);
-            PersistExclusions();
-        }
-        ImGui.SameLine();
-        ImGui.TextDisabled(session.AreAllCrystalsExcluded ? "(all excluded)" : "(not all excluded)");
-        ImGui.SameLine();
+        SameLineIfFits("Exclude items I have enough of");
         if (ImGui.Button("Exclude items I have enough of"))
         {
             session.ExcludeOwned(OwnedEverywhere);
@@ -479,11 +472,20 @@ public sealed class ListWindow : Window, IDisposable
         }
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Unticks every ingredient where what you hold (bags, saddlebag, retainers) already covers the quantity needed.\nRetainer counts are as of your last visit to each retainer. Items you have not got enough of stay as they are.");
-        ImGui.SameLine();
+        SameLineIfFits("Exclude crafted items");
         if (ImGui.Button("Exclude crafted items"))
             ExcludeCraftedNow();
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Unticks every ingredient that can be crafted, so only the raw materials are left to buy.\nCrystals, shards and clusters are not touched.");
+        SameLineIfFits("Exclude items in my house");
+        if (ImGui.Button("Exclude items in my house"))
+        {
+            // Unknown (no house counted yet) leaves the item ticked.
+            session.ExcludeOwned(id => owned.Summarize(id).House);
+            PersistExclusions();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Unticks every ingredient that is already in your house (placed or in the storeroom) in the quantity needed.\nOpen the Furnishings window once in each house first.");
         if (craftedButtonNote.Length > 0)
             WrappedColored(DimColor, craftedButtonNote);
 
@@ -498,7 +500,8 @@ public sealed class ListWindow : Window, IDisposable
         var vendorWidth = VendorWantedWidth(padding, ImGui.GetContentRegionAvail().X);
         // A resizable table keeps the widths from its first frame and no public call sets one later, so the wanted Vendor
         // width is part of the table id: when it changes the table starts over at the new width (and without a saved sort).
-        if (ImGui.BeginTable($"##ingredients{(int)vendorWidth}", 6,ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Sortable | ImGuiTableFlags.SortTristate, new Vector2(-1, tableHeight)))
+        // The column count is part of it too, so a table saved with fewer columns is never reused.
+        if (ImGui.BeginTable($"##ingredients{IngredientColumns}c{(int)vendorWidth}", IngredientColumns, ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Sortable | ImGuiTableFlags.SortTristate, new Vector2(-1, tableHeight)))
         {
             try
             {
@@ -511,6 +514,7 @@ public sealed class ListWindow : Window, IDisposable
                 ImGui.TableSetupColumn("Quantity", ImGuiTableColumnFlags.WidthFixed, CountColumnWidth("Quantity", padding));
                 ImGui.TableSetupColumn("On you", ImGuiTableColumnFlags.WidthFixed, CountColumnWidth("On you", padding));
                 ImGui.TableSetupColumn("Retainers", ImGuiTableColumnFlags.WidthFixed, CountColumnWidth("Retainers", padding));
+                ImGui.TableSetupColumn("House", ImGuiTableColumnFlags.WidthFixed, CountColumnWidth("House", padding));
                 ImGui.TableSetupColumn("Vendor", ImGuiTableColumnFlags.WidthFixed, vendorWidth);
                 ImGui.TableHeadersRow();
                 // Every widget below is keyed by r.ItemId, never by position, so display order does not matter to it.
@@ -541,6 +545,8 @@ public sealed class ListWindow : Window, IDisposable
                     DrawOnYou(summary, r.Quantity);
                     ImGui.TableNextColumn();
                     DrawRetainers(summary, r.ItemId, r.Quantity);
+                    ImGui.TableNextColumn();
+                    DrawHouse(summary, r.ItemId, r.Quantity);
                     ImGui.TableNextColumn();
                     DrawVendor(r.ItemId);
                 }
@@ -578,7 +584,7 @@ public sealed class ListWindow : Window, IDisposable
         }
 
         var now = Environment.TickCount64;
-        var countColumn = sortColumn is OnYouColumn or RetainersColumn;
+        var countColumn = sortColumn is OnYouColumn or RetainersColumn or HouseColumn;
         if (displayRows != null && sortColumn == VendorColumn && sources.IsReady != displayVendorsReady)
             displayRows = null;
         if (displayRows != null && countColumn && now - displayBuiltAtMs >= OwnedRefreshMs)
@@ -623,6 +629,12 @@ public sealed class ListWindow : Window, IDisposable
             case RetainersColumn:
             {
                 var keys = KeysById(rows, r => owned.Summarize(r.ItemId).Retainers ?? long.MinValue);
+                return (a, b) => keys[a.ItemId].CompareTo(keys[b.ItemId]);
+            }
+            case HouseColumn:
+            {
+                // Unknown ('-', no house counted yet) sorts lowest.
+                var keys = KeysById(rows, r => owned.Summarize(r.ItemId).House ?? long.MinValue);
                 return (a, b) => keys[a.ItemId].CompareTo(keys[b.ItemId]);
             }
             case VendorColumn:
@@ -695,6 +707,17 @@ public sealed class ListWindow : Window, IDisposable
 
     /// <summary>Bags, crystals and saddlebag; <c>null</c> until the bags have been read for this character.</summary>
     internal static long? OnYouTotal(OwnedSummary s) => s.OnYou is int now ? (long)now + (s.Saddlebag ?? 0) : null;
+
+    /// <summary>Puts the next button of the given label on the same line when it fits in the window, otherwise leaves it to wrap onto a new line.</summary>
+    private static void SameLineIfFits(string nextLabel)
+    {
+        var style = ImGui.GetStyle();
+        var next = ImGui.CalcTextSize(nextLabel).X + style.FramePadding.X * 2f;
+        var right = ImGui.GetCursorScreenPos().X + ImGui.GetContentRegionAvail().X;
+        if (ImGui.GetItemRectMax().X + style.ItemSpacing.X + next > right)
+            return;
+        ImGui.SameLine();
+    }
 
     /// <summary>The button: unticks crafted ingredients now. While the recipe index is still building it only starts that and says to press again.</summary>
     private void ExcludeCraftedNow()
@@ -790,6 +813,58 @@ public sealed class ListWindow : Window, IDisposable
             if (s.Retainers is long r && OnYouTotal(s) is long onYou)
                 ImGui.TextUnformatted($"With what is on you: {onYou + r:N0} of {needed:N0} needed");
             DrawRetainerLocations(s, where);
+        }
+        finally
+        {
+            ImGui.EndTooltip();
+        }
+    }
+
+    private void DrawHouse(OwnedSummary cell, uint itemId, int needed)
+    {
+        if (cell.House is long house)
+        {
+            var text = house.ToString("N0");
+            if (needed > 0 && house >= needed)
+                ImGui.TextColored(EnoughColor, text);
+            else
+                // Always this plugin's own record, so only as current as the last visit to each house.
+                ImGui.TextDisabled(text);
+        }
+        else
+        {
+            ImGui.TextDisabled("-");
+        }
+        if (!ImGui.IsItemHovered()) return;
+
+        // The tooltip reads one snapshot, so the total and the list of houses below it always agree.
+        var (s, where) = owned.SummarizeWithHouses(itemId);
+        ImGui.BeginTooltip();
+        try
+        {
+            if (s.House is long total)
+                ImGui.TextUnformatted($"In your houses: {total:N0} of {needed:N0} needed");
+            else
+                ImGui.TextDisabled("Unknown: no house has been counted yet");
+            ImGui.TextDisabled("Counts furniture placed inside the house and the storeroom, as of your last visit.");
+            if (where.Count > 0)
+            {
+                ImGui.Separator();
+                foreach (var loc in where.Take(MaxLocationLines))
+                {
+                    var label = string.IsNullOrEmpty(loc.Label) ? "(unnamed house)" : loc.Label;
+                    var parts = new List<string>(2);
+                    if (loc.Placed > 0)
+                        parts.Add($"Placed x{loc.Placed:N0}");
+                    if (loc.Storeroom > 0)
+                        parts.Add($"Storeroom x{loc.Storeroom:N0}");
+                    ImGui.TextUnformatted($"{label}: {string.Join(", ", parts)} (as of {LocalTime(loc.CapturedUtc)})");
+                }
+                if (where.Count > MaxLocationLines)
+                    ImGui.TextDisabled($"+{where.Count - MaxLocationLines} more");
+            }
+            if (s.House is null)
+                ImGui.TextDisabled("Open the Furnishings window once in each house to count it.");
         }
         finally
         {

@@ -21,6 +21,7 @@ internal sealed class WindowManager : IWindowHost, IDisposable
     private readonly ShoppingListService service;
     private readonly MaterialsCalculator calc;
     private readonly OwnedItemsService owned;
+    private readonly LifestreamService lifestream;
     private readonly IItemSources sources;
     private readonly IPluginLog log;
 
@@ -34,7 +35,7 @@ internal sealed class WindowManager : IWindowHost, IDisposable
     private int pasteCounter;
 
     public WindowManager(WindowSystem windowSystem, Configuration config, IArtisanListSource artisan, IItemInfo items,
-        IRecipeLookup recipes, IWorldData worlds, ShoppingListService service, MaterialsCalculator calc, OwnedItemsService owned, IItemSources sources, IPluginLog log)
+        IRecipeLookup recipes, IWorldData worlds, ShoppingListService service, MaterialsCalculator calc, OwnedItemsService owned, LifestreamService lifestream, IItemSources sources, IPluginLog log)
     {
         WindowSystem = windowSystem;
         this.config = config;
@@ -45,6 +46,7 @@ internal sealed class WindowManager : IWindowHost, IDisposable
         this.service = service;
         this.calc = calc;
         this.owned = owned;
+        this.lifestream = lifestream;
         this.sources = sources;
         this.log = log;
     }
@@ -135,7 +137,7 @@ internal sealed class WindowManager : IWindowHost, IDisposable
             existing.BringToFront();
             return;
         }
-        var window = new ResultsWindow(key, title + ResultsTitleSuffix, book, options, items, owned, OnResultsClosed);
+        var window = new ResultsWindow(key, title + ResultsTitleSuffix, book, options, items, owned, lifestream, OnResultsClosed);
         resultsWindows[key] = window;
         window.IsOpen = true;
         pending.Enqueue(() => WindowSystem.AddWindow(window));

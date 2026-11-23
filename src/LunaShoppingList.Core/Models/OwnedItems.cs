@@ -90,6 +90,7 @@ public sealed record RetainerLocation(
 /// <param name="RetainersExternal">The external source's count; <c>null</c> when it is unavailable or did not know the item. Kept for tooltips.</param>
 /// <param name="RetainersCapturedOldestUtc">Oldest retainer capture time in the cache; <c>null</c> when no retainer was captured.</param>
 /// <param name="RetainersCapturedNewestUtc">Newest retainer capture time in the cache; <c>null</c> when no retainer was captured.</param>
+/// <param name="House">Total of the item over every remembered house (placed furniture plus storeroom); <c>null</c> when no house was ever captured. Only as current as the last visit to each house.</param>
 public sealed record OwnedSummary(
     uint ItemId,
     int? OnYou,
@@ -100,4 +101,5 @@ public sealed record OwnedSummary(
     long? RetainersCached,
     long? RetainersExternal,
     DateTimeOffset? RetainersCapturedOldestUtc,
-    DateTimeOffset? RetainersCapturedNewestUtc);
+    DateTimeOffset? RetainersCapturedNewestUtc,
+    long? House = null);

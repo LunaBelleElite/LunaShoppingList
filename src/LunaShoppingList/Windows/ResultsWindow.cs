@@ -12,7 +12,7 @@ public sealed class ResultsWindow : Window
     /// <summary>A listing last reviewed longer ago than this is marked stale.</summary>
     internal static readonly TimeSpan StaleAfter = TimeSpan.FromHours(24);
 
-    private const string Footnote = "Prices are from Universalis, exclude market tax, and may be out of date. This plugin does not travel for you.";
+    private const string Footnote = "Prices are from Universalis, exclude market tax, and may be out of date. This plugin never travels on its own. A click on a world name only asks Lifestream to go there.";
     private const int TopWorlds = 8;
     private static readonly Vector4 Red = new(1f, 0.35f, 0.35f, 1f);
     private static readonly Vector4 Amber = new(1f, 0.75f, 0.2f, 1f);
@@ -29,6 +29,7 @@ public sealed class ResultsWindow : Window
     private readonly string key;
     private readonly IItemInfo items;
     private readonly OwnedItemsService owned;
+    private readonly LifestreamService lifestream;
     private readonly Action<string> onClosed;
 
     // The left pane lists items in the order the route visits them (first world first, then down each world's lines), so it reads the
@@ -72,17 +73,22 @@ public sealed class ResultsWindow : Window
     private bool planOpen = true;
     // Per window, not saved: false hides the left item list so the route has the whole window.
     private bool showItems = true;
+    // The last Lifestream result line, shown once near the Route title. Cleared when a new build replaces the results.
+    private string lifestreamNote = string.Empty;
+    private bool lifestreamAvailable;
+    private long lifestreamCheckedMs = long.MinValue;
 
     /// <summary>
     /// Creates the window. <paramref name="key"/> is the list's key (also used for the window id), <paramref name="onClosed"/> is called
     /// with it when the user closes the window.
     /// </summary>
-    internal ResultsWindow(string key, string title, OfferBook book, IReadOnlyList<PlanOption> options, IItemInfo items, OwnedItemsService owned, Action<string> onClosed)
+    internal ResultsWindow(string key, string title, OfferBook book, IReadOnlyList<PlanOption> options, IItemInfo items, OwnedItemsService owned, LifestreamService lifestream, Action<string> onClosed)
         : base(title + "###lsl-results-" + key)
     {
         this.key = key;
         this.items = items;
         this.owned = owned;
+        this.lifestream = lifestream;
         this.onClosed = onClosed;
         this.book = book;
         Size = new Vector2(900, 640);
@@ -101,6 +107,7 @@ public sealed class ResultsWindow : Window
         // Everything is computed first; if that throws, the previous book, rows and state stay as they were.
         Commit(Compute(book, options));
         refreshNotice = true;
+        lifestreamNote = string.Empty;
     }
 
     /// <summary>Everything derived from one book, computed without touching the window's fields.</summary>
@@ -701,7 +708,8 @@ public sealed class ResultsWindow : Window
                 {
                     ImGui.TableNextRow();
                     ImGui.TableNextColumn();
-                    ImGui.TextUnformatted(w.WorldName);
+                    if (DrawWorldLink(w.WorldName, "go"))
+                        lifestreamNote = lifestream.GoTo(w.WorldName);
                     ImGui.TableNextColumn();
                     ImGui.TextUnformatted(r.Units);
                     ImGui.TableNextColumn();
@@ -753,15 +761,64 @@ public sealed class ResultsWindow : Window
         return widest + ImGui.GetStyle().CellPadding.X * 2;
     }
 
+    /// <summary>
+    /// Draws a world name as a link-styled, frameless small button; true when clicked. The click is the only thing that ever asks
+    /// Lifestream to travel. <paramref name="idPrefix"/> keeps the id apart between the item tables and the route panel.
+    /// </summary>
+    private bool DrawWorldLink(string world, string idPrefix)
+    {
+        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0f, 0f, 0f, 0f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1f, 1f, 1f, 0.08f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(1f, 1f, 1f, 0.16f));
+        ImGui.PushStyleColor(ImGuiCol.Text, LinkBlue);
+        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(0f, 0f));
+        var clicked = ImGui.SmallButton($"{world}##{idPrefix}go");
+        ImGui.PopStyleVar();
+        ImGui.PopStyleColor(4);
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+            // The plugin list is read at most every few seconds, never every frame.
+            var now = Environment.TickCount64;
+            if (now - lifestreamCheckedMs > 5000)
+            {
+                lifestreamAvailable = lifestream.IsAvailable();
+                lifestreamCheckedMs = now;
+            }
+            ImGui.SetTooltip(lifestreamAvailable
+                ? $"Ask Lifestream to take you to {world}"
+                : $"Ask Lifestream to take you to {world}\nLifestream must be installed (and loaded) for this to work.");
+        }
+        return clicked;
+    }
+
+    private static readonly Vector4 LinkBlue = new(0.45f, 0.7f, 1f, 1f);
+
     private void DrawRoute()
     {
         var s = CurrentSummary();
         ImGui.TextUnformatted("Route");
+        if (lifestreamNote.Length > 0)
+        {
+            ImGui.PushTextWrapPos(0f);
+            ImGui.TextDisabled(lifestreamNote);
+            ImGui.PopTextWrapPos();
+        }
         ImGui.Separator();
 
         foreach (var w in s.Worlds)
         {
-            if (!ImGui.CollapsingHeader($"{w.WorldName} - {w.Lines.Count} items - {w.Total:N0} gil###route{w.WorldId}", ImGuiTreeNodeFlags.DefaultOpen))
+            // The arrow and the empty-labelled header toggle the section; the world name is a separate link drawn over the header's row
+            // (AllowOverlap lets that later widget take its own clicks), then the plain rest of the old header text.
+            var rowX = ImGui.GetCursorPosX();
+            var open = ImGui.CollapsingHeader($"##route{w.WorldId}", ImGuiTreeNodeFlags.DefaultOpen | ImGuiTreeNodeFlags.AllowItemOverlap);
+            ImGui.SameLine();
+            ImGui.SetCursorPosX(rowX + ImGui.GetTreeNodeToLabelSpacing());
+            if (DrawWorldLink(w.WorldName, "route"))
+                lifestreamNote = lifestream.GoTo(w.WorldName);
+            ImGui.SameLine(0, 0);
+            ImGui.TextUnformatted($" - {w.Lines.Count} items - {w.Total:N0} gil");
+            if (!open)
                 continue;
             // The columns can be dragged by their borders. They start as wide as their longest text, and a resizable table keeps
             // its first widths, so the widths are part of the table id: when the data needs different widths the table starts over.

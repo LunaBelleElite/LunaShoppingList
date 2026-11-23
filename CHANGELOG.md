@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.0.0 - 2026-11-23
+
+This covers everything since 0.12.1.0.
+
+- New House column in the ingredients window, after Retainers. It counts furniture placed inside your house plus what is in the storeroom. It turns green when your house alone covers the quantity, and you can sort by it. Hover a number to see each house, what is placed and what is in the storeroom, and when it was last seen.
+- The House column is only filled while the Furnishings window is open and you are standing inside the house. It remembers each house as of your last visit, so open Furnishings once in each house. Until you do, the figure is dim. The yard and the outdoor storeroom are not counted.
+- New Exclude items in my house button. It unticks every ingredient your house already covers, including ones you ticked by hand. An item whose house count isn't known yet stays ticked. Exclude items I have enough of doesn't count houses.
+- World names in the Route panel and in each expanded item on the left are now clickable. A click asks Lifestream, if you have it installed, to take you there. It never travels on its own. The note under the Route title only says Lifestream was asked, and if Lifestream can't go, it shows its own message in the game. If it isn't installed, the note says so.
+- The Toggle all crystals/shards/clusters button is gone. Exclude items I have enough of and Exclude crafted items cover that.
+- The ingredient buttons wrap onto a new line when the window is narrow.
+- Not yet checked in the game: any of the above. The riskiest parts are reading the house contents from the Furnishings window, and whether clicking a world name in an expanded item leaves that section open.
+
 ## 0.12.1.0 - 2026-11-23
 
 This covers everything since 0.12.0.0.
