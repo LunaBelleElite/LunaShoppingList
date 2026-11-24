@@ -3,7 +3,7 @@
     "Author": "LunaBelleElite",
     "Name": "Luna Shopping List",
     "InternalName": "LunaShoppingList",
-    "AssemblyVersion": "0.14.1.0",
+    "AssemblyVersion": "0.15.0.0",
     "Description": "Builds a price-optimised shopping list, grouped by world, from an Artisan crafting list using current Universalis prices.",
     "Punchline": "Builds a price-optimised shopping list from an Artisan crafting list.",
     "Tags": [
@@ -21,10 +21,10 @@
     "IsHide": false,
     "IsTestingExclusive": false,
     "DownloadCount": 0,
-    "LastUpdate": 1795474023,
-    "Changelog": "- Buttons say what they do now. Build shopping list is Find prices, the Exclude buttons say Untick, and Check/uncheck all is Tick all.\n- New Undo button. It takes back the last Tick or Untick button.\n- Hover a greyed-out button to see why it's greyed out.\n- Fixed: recipe data no longer retries forever after a failure, and changing ticks while prices load no longer shows old results.",
-    "DownloadLinkInstall": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.14.1.0/latest.zip",
-    "DownloadLinkUpdate": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.14.1.0/latest.zip",
-    "DownloadLinkTesting": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.14.1.0/latest.zip"
+    "LastUpdate": 1795522863,
+    "Changelog": "- New Buy only what I lack box next to Find prices. Ticked, it prices only what your bags, saddlebag and retainers don't already cover.\n- Listings older than 24 hours are now ignored. This is on by default, and you can turn it off by setting Ignore listings older than (hours) to 0 in the list browser.\n- The Route is grouped by data center, with a gil subtotal for each.\n- The monster drop list is kept on your computer and used if the download fails.",
+    "DownloadLinkInstall": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.15.0.0/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.15.0.0/latest.zip",
+    "DownloadLinkTesting": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.15.0.0/latest.zip"
   }
 ]
