@@ -222,8 +222,14 @@ Prices come from [Universalis](https://universalis.app), a community-run market
 board service. Thanks to the people who keep it running. The monster drop list
 comes from Teamcraft's open repository. Thanks to its authors for sharing it.
 
-Teamcraft and Artisan are separate projects, and this isn't affiliated with
-either. It isn't affiliated with or endorsed by Square Enix. Final Fantasy is a
+It also works with Artisan and Allagan Tools. It opens their crafting lists and
+writes lists to them, so thanks to the authors of both, including PunishXIV for
+[Artisan](https://github.com/PunishXIV/Artisan). It doesn't copy their code. It
+talks to Artisan through its plugin interface and list format, and to Allagan
+Tools through its public plugin interface.
+
+Teamcraft, Artisan and Allagan Tools are separate projects, and this isn't
+affiliated with any of them. It isn't affiliated with or endorsed by Square Enix. Final Fantasy is a
 trademark of Square Enix.
 
 It started from the SamplePlugin template the Dalamud authors publish.
