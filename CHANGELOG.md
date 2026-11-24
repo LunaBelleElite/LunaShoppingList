@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.17.0.1 - 2026-11-24
+
+- Big lists on busy items are now solved exactly more often, so the (estimate) tag shows up less. Prices that were already exact don't change.
+
 ## 0.17.0.0 - 2026-11-24
 
 - New Allagan Tools lists tab in the list browser. Open one of your Allagan Tools craft lists and it works out the materials, subcrafts included. If Allagan Tools isn't loaded, the tab says so.

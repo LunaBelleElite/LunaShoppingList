@@ -140,8 +140,8 @@ internal static class StackKnapsack
     }
 
     /// <summary>
-    /// The exact table a cover of <paramref name="need"/> needs (2026-11-24): totals <c>0..Cap</c> over the <c>Count</c> stacks no larger
-    /// than Cap, where Cap is <c>min(supply, need + largest stack below the need - 1)</c>. A stack of at least the need covers it
+    /// The exact table a cover of <paramref name="need"/> needs (2026-11-24): totals <c>0..Cap</c> over the <c>Count</c> stacks that
+    /// <see cref="Prune"/> keeps (none larger than Cap), where Cap is <c>min(supply, need + largest stack below the need - 1)</c>. A stack of at least the need covers it
     /// alone and is considered on its own (<see cref="Cover"/>), so only the stacks below the need decide how far the table reaches.
     /// <c>Table</c> is false when no table is needed: the stacks below the need together sell less than it, so the answer is one
     /// stack. Expects <c>supply &gt; need &gt; 0</c>.
@@ -162,11 +162,77 @@ internal static class StackKnapsack
         if (smallSupply < need)
             return (false, 0, 0);
         var cap = Math.Min(supply, need + maxSmall - 1);
+        return (true, cap, Prune(stacks, cap).Count);
+    }
+
+    /// <summary>
+    /// Which stacks the exact table over totals 0..<paramref name="cap"/> needs (2026-11-24): none above the cap, and of the stacks
+    /// of one quantity <c>q</c> only those fewer than <c>floor(cap / q)</c> others beat for sure. A cover within the cap holds at most
+    /// that many stacks of one quantity, so a stack with at least that many beaters is never needed. Stack <c>a</c> beats stack
+    /// <c>b</c> (same quantity) when it is cheaper, or costs the same, has a review at least as new and comes earlier in the order:
+    /// swapping <c>b</c> for an unused <c>a</c> then never raises the cost, never lowers the oldest review, and never moves a pick
+    /// later, so the search never takes <c>b</c> over it. The review and the order only count among equal prices (a cheaper stack
+    /// wins whatever its review), and a stack that is newer but later in the order is not a beater, because it only wins when the
+    /// oldest review of the whole cover is at stake. Only equal quantities are compared: a bigger or cheaper stack does not replace
+    /// another one, since a stack can be used once. <c>Keep</c> is indexed like <paramref name="stacks"/>; <c>Count</c> is how many
+    /// are kept.
+    /// </summary>
+    internal static (bool[] Keep, int Count) Prune(IReadOnlyList<Stack> stacks, long cap)
+    {
+        var keep = new bool[stacks.Count];
+        var groups = new Dictionary<int, List<int>>();
         var count = 0;
-        foreach (var s in stacks)
-            if (s.Quantity <= cap)
-                count++;
-        return (true, cap, count);
+        for (var i = 0; i < stacks.Count; i++)
+        {
+            var q = stacks[i].Quantity;
+            if (q > cap)
+                continue;
+            if (!groups.TryGetValue(q, out var list))
+                groups[q] = list = new List<int>();
+            list.Add(i);
+        }
+        foreach (var (q, list) in groups)
+        {
+            var limit = cap / q;
+            if (list.Count <= limit)
+            {
+                foreach (var i in list)
+                    keep[i] = true;
+                count += list.Count;
+                continue;
+            }
+            // Cheaper price first, the order within a price (the list is ascending, so a stable key on the price alone would do;
+            // the index is spelled out because the sort is not stable).
+            list.Sort((a, b) => stacks[a].UnitPrice != stacks[b].UnitPrice ? stacks[a].UnitPrice.CompareTo(stacks[b].UnitPrice) : a.CompareTo(b));
+            var cheaper = 0;
+            for (var start = 0; start < list.Count;)
+            {
+                var end = start;
+                while (end < list.Count && stacks[list[end]].UnitPrice == stacks[list[start]].UnitPrice)
+                    end++;
+                var room = limit - cheaper;
+                if (room <= 0)
+                    break; // every stack from here on has `limit` cheaper ones
+                // The `room` newest reviews among the earlier stacks of this price: a stack with that many earlier ones at least as
+                // new has `limit` beaters.
+                var newest = new PriorityQueue<long, long>();
+                for (var k = start; k < end; k++)
+                {
+                    var review = stacks[list[k]].ReviewTicks;
+                    if (!(newest.Count == room && newest.Peek() >= review))
+                    {
+                        keep[list[k]] = true;
+                        count++;
+                    }
+                    newest.Enqueue(review, review);
+                    if (newest.Count > room)
+                        newest.Dequeue();
+                }
+                cheaper += end - start;
+                start = end;
+            }
+        }
+        return (keep, count);
     }
 
     /// <summary>
@@ -235,11 +301,13 @@ internal static class StackKnapsack
                 table = Table.Build(stacks, (int)cap);
             else
             {
-                // Stacks larger than the cap change nothing in the table: leave them out, keeping the order, and map back.
+                // Stacks larger than the cap, and the ones no cover within it can need (see <see cref="Prune"/>), change nothing in the table:
+                // leave them out, keeping the order, and map back.
+                var keep = Prune(stacks, cap).Keep;
                 var kept = new List<Stack>(count);
                 var map = new int[count];
                 for (var i = 0; i < stacks.Count; i++)
-                    if (stacks[i].Quantity <= cap)
+                    if (keep[i])
                     {
                         map[kept.Count] = i;
                         kept.Add(stacks[i]);

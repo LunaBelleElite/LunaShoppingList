@@ -8,4 +8,7 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <RootNamespace>LunaShoppingList.Core</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="LunaShoppingList.Core.Tests" />
+  </ItemGroup>
 </Project>
