@@ -130,19 +130,38 @@ internal sealed class WindowManager : IWindowHost, IDisposable
     }
 
     /// <inheritdoc />
-    public void ShowResults(string key, string title, OfferBook book, IReadOnlyList<PlanOption> options)
+    public void ShowResults(string key, string title, OfferBook book, IReadOnlyList<PlanOption> options, BuildContext context)
     {
         if (resultsWindows.TryGetValue(key, out var existing))
         {
-            existing.Update(book, options);
+            existing.Update(book, options, context);
             existing.IsOpen = true;
             existing.BringToFront();
             return;
         }
-        var window = new ResultsWindow(key, title + ResultsTitleSuffix, book, options, items, owned, lifestream, OnResultsClosed);
+        var window = new ResultsWindow(key, title + ResultsTitleSuffix, book, options, context, items, owned, lifestream, DataCenterOf, OnResultsClosed);
         resultsWindows[key] = window;
         window.IsOpen = true;
         pending.Enqueue(() => WindowSystem.AddWindow(window));
+    }
+
+    // World id to data center name, built from the game's world list on first use (UI thread) and kept once it has entries.
+    private Dictionary<uint, string>? dataCenters;
+
+    /// <summary>The data center name of a world, or null when the world is not known. Used to group the route by data center.</summary>
+    private string? DataCenterOf(uint worldId)
+    {
+        if (dataCenters == null)
+        {
+            var map = new Dictionary<uint, string>();
+            foreach (var w in worlds.AllWorlds)
+                if (!string.IsNullOrWhiteSpace(w.DataCenter))
+                    map.TryAdd(w.Id, w.DataCenter);
+            if (map.Count == 0)
+                return null; // not available yet: try again next time instead of caching an empty map
+            dataCenters = map;
+        }
+        return dataCenters.GetValueOrDefault(worldId);
     }
 
     private void OnResultsClosed(string key)

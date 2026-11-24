@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.15.0.0 - 2026-11-24
+
+- New Buy only what I lack box next to Find prices. Ticked, it prices only what your bags, saddlebag and retainers don't already cover.
+- Listings older than 24 hours are now ignored. This is on by default, and you can turn it off by setting Ignore listings older than (hours) to 0 in the list browser.
+- The Route is grouped by data center, with a gil subtotal for each.
+- The monster drop list is kept on your computer and used if the download fails.
+
 ## 0.14.1.0 - 2026-11-23
 
 - Buttons say what they do now. Build shopping list is Find prices, the Exclude buttons say Untick, and Check/uncheck all is Tick all.

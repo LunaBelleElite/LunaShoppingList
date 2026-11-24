@@ -24,6 +24,22 @@ public sealed class Configuration : IPluginConfiguration
     /// </summary>
     public bool ExcludeCraftedItems { get; set; }
 
+    /// <summary>
+    /// When true, Find prices buys only what the player lacks: what they hold (bags, saddlebag, retainers, never the house) is subtracted first.
+    /// A settings file without the member loads as false.
+    /// </summary>
+    public bool BuyOnlyWhatILack { get; set; }
+
+    /// <summary>
+    /// Listings last reviewed longer ago than this many hours are ignored when prices are found; 0 turns the filter off.
+    /// A settings file without the member loads as 24; a hand-edited value is clamped to 0..720 on load.
+    /// </summary>
+    public int MaxListingAgeHours { get; set; } = DefaultMaxListingAgeHours;
+
+    internal const int DefaultMaxListingAgeHours = 24;
+
+    internal const int MaxListingAgeHoursLimit = 720;
+
     public TravelScopeKind LastScope { get; set; } = TravelScopeKind.CrossWorld;
 
     /// <summary>Last chosen Artisan list id, or null if none.</summary>
@@ -57,6 +73,7 @@ public sealed class Configuration : IPluginConfiguration
         IncludedItemsByList ??= new();
         DropNullSets(ExcludedItemsByList);
         DropNullSets(IncludedItemsByList);
+        MaxListingAgeHours = Math.Clamp(MaxListingAgeHours, 0, MaxListingAgeHoursLimit);
     }
 
     // A null inner set would reach session.LoadFromList and throw; an absent entry means the same as an empty one.

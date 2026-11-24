@@ -7,19 +7,14 @@ Artisan crafting lists, or a list you made in the plugin, and press Find prices.
 It asks Universalis what everything costs right now and shows each item once,
 with the worlds selling it. You can pick where to buy each thing yourself, or
 let it suggest the plan with the fewest worlds for what you're willing to spend.
-It also shows how many of each item you already have, and it reads and writes
-Teamcraft and Artisan lists.
+It also shows how many of each item you already have, can leave that out of
+the bill, and reads and writes Teamcraft and Artisan lists.
 
 It never travels and never buys anything. It tells you where to go. If you have
 Lifestream, clicking a world name asks Lifestream to take you there.
 
 I use it for my own crafting and fix bugs as I hit them. If you find one, open
 an issue here and say what you did.
-
-Some of the newest parts haven't been tried in the game yet: the House column
-and Untick items in my house, the monster drop label, clicking a world name,
-Undo, the hover tips on greyed-out buttons, and importing a Teamcraft link or
-an Artisan export. If one of them misbehaves, I'd like to hear about it.
 
 ## Add the repository in the game
 
@@ -98,6 +93,13 @@ The list window shows every ingredient with a **Buy** box.
   pressed. It only goes back one step, and loading the list or ticking a row
   yourself clears it.
 - Hover a greyed-out button to see why. Find prices needs at least one row ticked.
+- **Buy only what I lack**, next to Find prices, is off until you tick it. Then
+  Find prices only prices what's left after your bags, saddlebag and retainers.
+  Hover it to read this. The results show `need 10 (you hold 40 of 50)`, and a
+  dim note lists items you already have enough of.
+- **Ignore listings older than (hours)**, in the list browser, skips old
+  listings. It starts at 24, and 0 turns it off. The results say how many
+  listings were hidden.
 - Click a column header to sort, and click again to reverse it. Closing the
   window puts the list's own order back.
 - **Reload list** reads the list again. Use it after changing the list somewhere
@@ -130,8 +132,9 @@ The columns:
   list** to give the route the whole window.
 - Type a quantity next to a world to change what you buy there. The totals
   follow, and the header says the plan was edited by hand.
-- The **Route** panel lists each world and what to buy there. Click an item
-  name to copy it for the market board search.
+- The **Route** panel lists each world and what to buy there. When you shop on
+  more than one data center, the worlds sit under a heading for each, with its
+  gil subtotal. Click an item name to copy it for the market board search.
 - Click a world name, in the route or in an open item, to ask Lifestream to take
   you there. If it can't go, Lifestream tells you in the game.
 - The **Age** column marks a listing stale when it's over a day old.
@@ -140,9 +143,10 @@ The columns:
 
 ## What it won't do
 
-It doesn't take what you own off the bill. Find prices prices the full
-quantity, whatever the On you, Retainers and House columns say. Untick what you
-don't need.
+It only takes what you own off the bill if you tick Buy only what I lack.
+Without it, Find prices prices the full quantity, so untick what you don't need.
+With it, your house still isn't counted, and an item whose count isn't known
+yet is bought in full.
 
 It only sees a retainer or the saddlebag while it's open, so it remembers what
 they held last time, per character. Open each retainer once. Equipped and
@@ -183,8 +187,17 @@ than shown.
   its count and the plugin's own.
 - An internet connection. Prices come from Universalis. When the plugin starts
   it also downloads the monster drop list from Teamcraft's public repository on
-  GitHub. That request sends nothing about you. If it fails 3 times, you get no
-  drop labels that session.
+  GitHub. That request sends nothing about you. It keeps a copy in the plugin's
+  config folder and uses it if the next download fails 3 times. With no copy,
+  you get no drop labels that session.
+
+## Something not working right?
+
+[Open an issue](https://github.com/LunaBelleElite/LunaShoppingList/issues) and
+tell me what happened. I can't promise a fix by tomorrow, but I read every one.
+The form asks for your plugin and Dalamud versions and what you did. If you can,
+paste the lines from `/xllog` around the time it went wrong. That's usually what
+turns "it broke" into something I can chase down.
 
 ## Licence and credits
 

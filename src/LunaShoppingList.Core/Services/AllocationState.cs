@@ -91,7 +91,7 @@ public sealed class AllocationState
             .AsReadOnly();
 
     /// <summary>The route for the current allocation.</summary>
-    public RouteSummary Summarize() => RouteSummarizer.Summarize(Book, Lines);
+    public RouteSummary Summarize(Func<uint, string?>? dataCenterOf = null) => RouteSummarizer.Summarize(Book, Lines, dataCenterOf);
 
     private WorldOffer? FindWorld(uint itemId, uint worldId)
     {

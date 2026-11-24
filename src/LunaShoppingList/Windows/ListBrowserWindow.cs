@@ -307,7 +307,7 @@ public sealed class ListBrowserWindow : Window
         }
         else
         {
-            var footer = ImGui.GetFrameHeightWithSpacing() * (UntickRowWraps() ? 2 : 1) + (hiddenCount > 0 ? ImGui.GetTextLineHeightWithSpacing() * 3 : 0);
+            var footer = ImGui.GetFrameHeightWithSpacing() * (UntickRowWraps() ? 3 : 2) + (hiddenCount > 0 ? ImGui.GetTextLineHeightWithSpacing() * 3 : 0);
             var height = Math.Max(ImGui.GetTextLineHeightWithSpacing() * 4, ImGui.GetContentRegionAvail().Y - footer);
             // EndChild is called whatever BeginChild returned.
             try
@@ -346,6 +346,7 @@ public sealed class ListBrowserWindow : Window
         }
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(ExcludeCraftedTooltip);
+        DrawListingAge();
         if (hiddenCount > 0 && lists.Count > 0)
         {
             ImGui.PushTextWrapPos(0f);
@@ -358,6 +359,24 @@ public sealed class ListBrowserWindow : Window
                 ImGui.PopTextWrapPos();
             }
         }
+    }
+
+    private const int MaxListingAgeLimit = 720;
+
+    /// <summary>
+    /// The listing age setting: an integer box on a local copy (an ImGui int box edits the variable it is given, so the saved value
+    /// is only written when an edit happened). The value is kept inside 0 to 720 and saved once the box is left, not on every key.
+    /// </summary>
+    private void DrawListingAge()
+    {
+        var hours = Math.Clamp(config.MaxListingAgeHours, 0, MaxListingAgeLimit);
+        ImGui.SetNextItemWidth(ImGui.GetFontSize() * 9f);
+        if (ImGui.InputInt("Ignore listings older than (hours)", ref hours, 1, 24))
+            config.MaxListingAgeHours = Math.Clamp(hours, 0, MaxListingAgeLimit);
+        if (ImGui.IsItemDeactivatedAfterEdit())
+            config.Save();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Set 0 to turn this off.");
     }
 
     /// <summary>True when the Refresh lists button and the untick checkbox do not fit on one line at the current width.</summary>

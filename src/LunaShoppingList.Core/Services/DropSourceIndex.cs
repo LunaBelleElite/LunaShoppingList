@@ -14,6 +14,8 @@ public sealed class DropSourceIndex : IDropSources, IDisposable
 
     private readonly Func<CancellationToken, Task<string>> fetch;
     private readonly Action<string>? log;
+    private readonly Func<string?>? readCache;
+    private readonly Action<string>? writeCache;
     private readonly long retryDelayMs;
     private readonly CancellationTokenSource cancel = new();
 
@@ -29,11 +31,16 @@ public sealed class DropSourceIndex : IDropSources, IDisposable
     /// <param name="fetch">Returns the drop list's JSON text; may throw. Must honour the token.</param>
     /// <param name="log">Receives info, warning and error lines; optional.</param>
     /// <param name="retryDelay">Least time between attempts; <see cref="DefaultRetryDelay"/> when null.</param>
-    public DropSourceIndex(Func<CancellationToken, Task<string>> fetch, Action<string>? log = null, TimeSpan? retryDelay = null)
+    /// <param name="readCache">Returns the saved copy of the list, or null if there is none; may throw. Only used after the first failed download.</param>
+    /// <param name="writeCache">Saves the text of a download that parsed; may throw. Never given text that did not parse.</param>
+    public DropSourceIndex(Func<CancellationToken, Task<string>> fetch, Action<string>? log = null, TimeSpan? retryDelay = null,
+        Func<string?>? readCache = null, Action<string>? writeCache = null)
     {
         ArgumentNullException.ThrowIfNull(fetch);
         this.fetch = fetch;
         this.log = log;
+        this.readCache = readCache;
+        this.writeCache = writeCache;
         retryDelayMs = (long)(retryDelay ?? DefaultRetryDelay).TotalMilliseconds;
     }
 
@@ -101,6 +108,7 @@ public sealed class DropSourceIndex : IDropSources, IDisposable
                 drops = parsed;
                 log?.Invoke($"Drop list ready: {parsed.Count} items");
             }
+            SaveCopy(text);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
@@ -108,6 +116,8 @@ public sealed class DropSourceIndex : IDropSources, IDisposable
         }
         catch (Exception ex)
         {
+            if (attempt == 1 && ReadyFromSavedCopy(ex))
+                return;
             lock (gate)
             {
                 if (disposed)
@@ -122,6 +132,57 @@ public sealed class DropSourceIndex : IDropSources, IDisposable
                     log?.Invoke($"Loading the drop list failed (attempt {attempt} of {MaxAttempts}), it will be tried again: {ex.Message}");
                 }
             }
+        }
+    }
+
+    private void SaveCopy(string text)
+    {
+        if (writeCache == null)
+            return;
+        try
+        {
+            writeCache(text);
+        }
+        catch (Exception ex)
+        {
+            Log($"The drop list could not be saved for next time: {ex.Message}");
+        }
+    }
+
+    // After the first failed download: become ready from the saved copy if there is one that parses. True when handled.
+    private bool ReadyFromSavedCopy(Exception downloadError)
+    {
+        if (readCache == null)
+            return false;
+        HashSet<uint> parsed;
+        try
+        {
+            var text = readCache();
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+            parsed = DropSourceParser.Parse(text);
+        }
+        catch (Exception ex)
+        {
+            Log($"The saved drop list could not be used, the download will be tried again: {ex.Message}");
+            return false;
+        }
+        lock (gate)
+        {
+            if (disposed)
+                return true;
+            drops = parsed;
+            log?.Invoke($"Drop list ready from saved copy: {parsed.Count} items (download did not work: {downloadError.Message})");
+        }
+        return true;
+    }
+
+    private void Log(string line)
+    {
+        lock (gate)
+        {
+            if (!disposed)
+                log?.Invoke(line);
         }
     }
 

@@ -61,13 +61,15 @@ public sealed class ShoppingListService
     /// <param name="exclusions">Items the user chose not to buy; they appear in <see cref="OfferBook.Skipped"/>.</param>
     /// <param name="progress">Optional human-readable progress messages (may be called from any thread).</param>
     /// <param name="ct">Cancellation.</param>
+    /// <param name="listingFilter">Optional listing-age filter passed to <see cref="OfferBookBuilder.Build"/>; <c>null</c> keeps every listing.</param>
     /// <exception cref="InvalidOperationException">The current world is unknown, or Universalis lists no world in the scope.</exception>
     public async Task<OfferBook> BuildOfferBookAsync(
         IReadOnlyList<Requirement> requirements,
         TravelScopeKind scope,
         ExclusionState exclusions,
         IProgress<string>? progress,
-        CancellationToken ct)
+        CancellationToken ct,
+        ListingFilter? listingFilter = null)
     {
         var (merged, allowedWorldIds) = await FetchListingsAsync(requirements, scope, exclusions, progress, ct).ConfigureAwait(false);
 
@@ -92,7 +94,7 @@ public sealed class ShoppingListService
         }
 
         var forOffers = offMarketIds.Count == 0 ? requirements : requirements.Where(r => !offMarketIds.Contains(r.ItemId)).ToList();
-        return OfferBookBuilder.Build(forOffers, merged, allowedWorldIds, exclusions) with { NotOnMarket = notOnMarket };
+        return OfferBookBuilder.Build(forOffers, merged, allowedWorldIds, exclusions, listingFilter) with { NotOnMarket = notOnMarket };
     }
 
     /// <summary>

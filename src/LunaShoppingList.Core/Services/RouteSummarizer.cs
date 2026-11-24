@@ -8,7 +8,7 @@ public static class RouteSummarizer
     /// groups the lines per world and reports what is still missing. Lines for unknown items or worlds, and zero or negative
     /// quantities, are ignored; lines for the same item and world are summed first. Ordering as documented on the records.
     /// </summary>
-    public static RouteSummary Summarize(OfferBook book, IReadOnlyList<AllocationLine> lines)
+    public static RouteSummary Summarize(OfferBook book, IReadOnlyList<AllocationLine> lines, Func<uint, string?>? dataCenterOf = null)
     {
         ArgumentNullException.ThrowIfNull(book);
         ArgumentNullException.ThrowIfNull(lines);
@@ -49,9 +49,11 @@ public static class RouteSummarizer
             .Select(kv =>
             {
                 var ordered = kv.Value.Lines.OrderBy(l => l.ItemId).ToList();
-                return new WorldRoute(kv.Key, kv.Value.Name, ordered, ordered.Sum(l => l.Cost));
+                return new WorldRoute(kv.Key, kv.Value.Name, ordered, ordered.Sum(l => l.Cost), dataCenterOf?.Invoke(kv.Key));
             })
-            .OrderBy(w => w.WorldName, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(w => dataCenterOf is not null && w.DataCenter is null ? 1 : 0)
+            .ThenBy(w => dataCenterOf is null ? null : w.DataCenter, StringComparer.Ordinal)
+            .ThenBy(w => w.WorldName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(w => w.WorldId)
             .ToList();
 
@@ -63,7 +65,14 @@ public static class RouteSummarizer
                 unmet.Add(new ShortfallItem(item.ItemId, (int)(item.Needed - have)));
         }
 
-        return new RouteSummary(worlds, worlds.Sum(w => w.Total), unmet);
+        List<DataCenterRoute>? groups = null;
+        if (dataCenterOf is not null)
+            groups = worlds
+                .GroupBy(w => w.DataCenter)
+                .Select(g => new DataCenterRoute(g.Key, g.ToList(), g.Sum(w => w.Total)))
+                .ToList();
+
+        return new RouteSummary(worlds, worlds.Sum(w => w.Total), unmet, groups);
     }
 
     /// <summary>Summarizes the two plans and pairs them so the UI can show what the fewest-worlds plan costs extra and saves.</summary>

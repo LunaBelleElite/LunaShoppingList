@@ -58,6 +58,10 @@ public sealed class ResultsWindow : Window
     private OfferBook book;
     // The note for the items that are not sold on the market board, built once per book instead of every frame.
     private string notOnMarketText = string.Empty;
+    // What the build subtracted for what the player already holds, and the note for the items that needed nothing bought; both per book.
+    private BuildContext context = BuildContext.None;
+    private string coveredText = string.Empty;
+    private readonly Func<uint, string?> dataCenterOf;
     private AllocationState state = null!;
     private RouteSummary? summary;
     private Dictionary<uint, Row[]> rows = new();
@@ -88,30 +92,31 @@ public sealed class ResultsWindow : Window
     /// Creates the window. <paramref name="key"/> is the list's key (also used for the window id), <paramref name="onClosed"/> is called
     /// with it when the user closes the window.
     /// </summary>
-    internal ResultsWindow(string key, string title, OfferBook book, IReadOnlyList<PlanOption> options, IItemInfo items, OwnedItemsService owned, LifestreamService lifestream, Action<string> onClosed)
+    internal ResultsWindow(string key, string title, OfferBook book, IReadOnlyList<PlanOption> options, BuildContext context, IItemInfo items, OwnedItemsService owned, LifestreamService lifestream, Func<uint, string?> dataCenterOf, Action<string> onClosed)
         : base(title + "###lsl-results-" + key)
     {
         this.key = key;
         this.items = items;
         this.owned = owned;
         this.lifestream = lifestream;
+        this.dataCenterOf = dataCenterOf;
         this.onClosed = onClosed;
         this.book = book;
         Size = new Vector2(900, 640);
         SizeCondition = ImGuiCond.FirstUseEver;
         // Escape must not close the window while the user is typing in a quantity box.
         RespectCloseHotkey = false;
-        Commit(Compute(book, options));
+        Commit(Compute(book, options, context));
     }
 
     /// <summary>
     /// Replaces the offers shown (a new Build for the same list). The user's manual changes are reset and the plan within the
     /// remembered budget is applied again to the new options; a notice says so until they edit a quantity or use the trade-off control.
     /// </summary>
-    internal void Update(OfferBook book, IReadOnlyList<PlanOption> options)
+    internal void Update(OfferBook book, IReadOnlyList<PlanOption> options, BuildContext context)
     {
         // Everything is computed first; if that throws, the previous book, rows and state stay as they were.
-        Commit(Compute(book, options));
+        Commit(Compute(book, options, context));
         refreshNotice = true;
         lifestreamNote = string.Empty;
     }
@@ -124,9 +129,10 @@ public sealed class ResultsWindow : Window
         AllocationState State,
         Dictionary<uint, Row[]> Rows,
         Dictionary<uint, bool> OpenItems,
-        HashSet<uint> Present);
+        HashSet<uint> Present,
+        BuildContext Context);
 
-    private Computed Compute(OfferBook b, IReadOnlyList<PlanOption> options)
+    private Computed Compute(OfferBook b, IReadOnlyList<PlanOption> options, BuildContext context)
     {
         var s = new AllocationState(b);
         PlanOption? pick = null;
@@ -140,13 +146,17 @@ public sealed class ResultsWindow : Window
             s.Apply(Suggester.Suggest(b, SuggestionMode.Cheapest));
         }
         var (map, open, present) = PrecomputeRows(b);
-        return new Computed(b, options, pick, s, map, open, present);
+        return new Computed(b, options, pick, s, map, open, present, context);
     }
 
     private void Commit(Computed c)
     {
-        // First, so a failure here leaves the previous book and state untouched.
-        notOnMarketText = c.Book.NotOnMarket.Count > 0 ? NotOnMarketNote.Text(c.Book.NotOnMarket, Name) : string.Empty;
+        // Both texts are built into locals first, so a failure in either leaves the previous book and state untouched.
+        var newNotOnMarketText = c.Book.NotOnMarket.Count > 0 ? NotOnMarketNote.Text(c.Book.NotOnMarket, Name) : string.Empty;
+        var newCoveredText = CoveredNote(c.Context.FullyCovered);
+        notOnMarketText = newNotOnMarketText;
+        coveredText = newCoveredText;
+        context = c.Context;
         book = c.Book;
         planOptions = c.Options;
         applied = c.Applied;
@@ -225,7 +235,7 @@ public sealed class ResultsWindow : Window
     {
         if (dirty || summary == null)
         {
-            summary = state.Summarize();
+            summary = state.Summarize(dataCenterOf);
             dirty = false;
         }
         return summary;
@@ -633,6 +643,21 @@ public sealed class ResultsWindow : Window
             ImGui.Spacing();
         }
 
+        // Items the player already holds in full were left out of the prices on purpose; one dim line says which.
+        if (coveredText.Length > 0)
+        {
+            ImGui.Separator();
+            ImGui.PushTextWrapPos(0f);
+            try
+            {
+                ImGui.TextDisabled(coveredText);
+            }
+            finally
+            {
+                ImGui.PopTextWrapPos();
+            }
+        }
+
         if (book.Skipped.Count > 0)
         {
             ImGui.Separator();
@@ -659,6 +684,18 @@ public sealed class ResultsWindow : Window
         DrawFootnote();
     }
 
+    private const int CoveredNamesShown = 8;
+
+    /// <summary>The one-line note for items fully held, at most <see cref="CoveredNamesShown"/> names then ", +N more"; empty when there are none.</summary>
+    private string CoveredNote(IReadOnlyList<Requirement> covered)
+    {
+        if (covered.Count == 0)
+            return string.Empty;
+        var shown = string.Join(", ", covered.Take(CoveredNamesShown).Select(r => $"{Name(r.ItemId)} x{r.Quantity:N0}"));
+        var more = covered.Count > CoveredNamesShown ? $", +{covered.Count - CoveredNamesShown:N0} more" : string.Empty;
+        return $"Already covered by what you hold: {shown}{more}";
+    }
+
     /// <summary>The prices disclaimer. Drawn under the item list, or under the route when the item list is hidden, so it is always on screen once.</summary>
     private static void DrawFootnote()
     {
@@ -679,19 +716,31 @@ public sealed class ResultsWindow : Window
             : allocated > item.Needed
                 ? $" - plan buys {allocated:N0}, over by {allocated - item.Needed:N0}"
                 : $" - plan buys {allocated:N0}";
-        var status = $" - have {haveText} of {item.Needed:N0}{plan}";
+        // An item that was reduced by what the player holds says so, and leaves out the live "have" figure: that figure counts the
+        // same units that were already taken off the need, so "have 40 of 10" would only confuse.
+        string title;
+        if (context.Held.TryGetValue(item.ItemId, out var held) && held > 0)
+            title = $"{Name(item.ItemId)} - need {item.Needed:N0} (you hold {held:N0} of {(long)item.Needed + held:N0}){plan}";
+        else
+            title = $"{Name(item.ItemId)} - need {item.Needed:N0} - have {haveText} of {item.Needed:N0}{plan}";
 
         ImGui.SetNextItemOpen(openItems.TryGetValue(item.ItemId, out var wasOpen) && wasOpen);
-        var open = ImGui.CollapsingHeader($"{Name(item.ItemId)} - need {item.Needed:N0}{status}###item{item.ItemId}");
+        var open = ImGui.CollapsingHeader($"{title}###item{item.ItemId}");
         openItems[item.ItemId] = open;
         if (!open)
             return;
 
         if (item.Worlds.Count == 0)
         {
-            ImGui.TextDisabled("No listings in your scope");
+            ImGui.TextDisabled(item.DroppedListings > 0 && context.MaxAgeHours > 0
+                ? $"No listings newer than {Plural.Of(context.MaxAgeHours, "hour")} ({item.DroppedListings:N0} hidden)"
+                : "No listings in your scope");
             return;
         }
+
+        // Listings older than the age limit were left out, so say so rather than silently showing a possibly higher price.
+        if (item.DroppedListings > 0 && context.MaxAgeHours > 0)
+            ImGui.TextDisabled($"{Plural.Of(item.DroppedListings, "older listing")} hidden");
 
         var all = showAll.Contains(item.ItemId);
         if (item.Worlds.Count > TopWorlds
@@ -846,7 +895,34 @@ public sealed class ResultsWindow : Window
         }
         ImGui.Separator();
 
-        foreach (var w in s.Worlds)
+        // With more than one data center on the route each gets a heading with its subtotal; with one (or no lookup) the list is flat.
+        if (s.DataCenters.Count > 1)
+        {
+            foreach (var group in s.DataCenters)
+            {
+                var dcName = string.IsNullOrWhiteSpace(group.Name) ? "Other" : group.Name;
+                ImGui.Spacing();
+                ImGui.TextUnformatted($"{dcName} - {Plural.Of(group.Worlds.Count, "world")} - {group.Subtotal:N0} gil");
+                ImGui.Separator();
+                foreach (var w in group.Worlds)
+                    DrawRouteWorld(s, w);
+            }
+        }
+        else
+        {
+            foreach (var w in s.Worlds)
+                DrawRouteWorld(s, w);
+        }
+
+        ImGui.Separator();
+        ImGui.TextUnformatted($"Grand total: {s.GrandTotal:N0} gil");
+        ImGui.TextUnformatted($"Worlds to visit: {s.WorldCount:N0}");
+        if (!showItems)
+            DrawFootnote();
+    }
+
+    private void DrawRouteWorld(RouteSummary s, WorldRoute w)
+    {
         {
             // The arrow and the empty-labelled header toggle the section; the world name is a separate link drawn over the header's row
             // (AllowOverlap lets that later widget take its own clicks), then the plain rest of the old header text.
@@ -859,7 +935,7 @@ public sealed class ResultsWindow : Window
             ImGui.SameLine(0, 0);
             ImGui.TextUnformatted($" - {Plural.Of(w.Lines.Count, "item")} - {w.Total:N0} gil");
             if (!open)
-                continue;
+                return;
             // The columns can be dragged by their borders. They start as wide as their longest text, and a resizable table keeps
             // its first widths, so the widths are part of the table id: when the data needs different widths the table starts over.
             var qtyWidth = FitWidth("Qty", w.Lines.Select(l => l.Quantity.ToString("N0")));
@@ -870,7 +946,7 @@ public sealed class ResultsWindow : Window
             try
             {
                 if (!routeOpen)
-                    continue;
+                    return;
                 ImGui.TableSetupColumn("Item");
                 ImGui.TableSetupColumn("Qty", ImGuiTableColumnFlags.WidthFixed, qtyWidth);
                 ImGui.TableSetupColumn("Price", ImGuiTableColumnFlags.WidthFixed, priceWidth);
@@ -902,11 +978,5 @@ public sealed class ResultsWindow : Window
                     ImGui.EndTable();
             }
         }
-
-        ImGui.Separator();
-        ImGui.TextUnformatted($"Grand total: {s.GrandTotal:N0} gil");
-        ImGui.TextUnformatted($"Worlds to visit: {s.WorldCount:N0}");
-        if (!showItems)
-            DrawFootnote();
     }
 }

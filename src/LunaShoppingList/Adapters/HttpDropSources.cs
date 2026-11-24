@@ -13,9 +13,44 @@ public static class HttpDropSources
 
     private static readonly HttpClient Client = new(new HttpClientHandler { UseCookies = false }) { Timeout = TimeSpan.FromSeconds(15) };
 
-    /// <summary>Creates the index; call <see cref="DropSourceIndex.WarmUp"/> to start loading it.</summary>
-    public static DropSourceIndex Create(IPluginLog log)
-        => new(Fetch, line => Write(log, line));
+    internal const string CacheFileName = "drop-sources.cache.json";
+
+    /// <summary>
+    /// Creates the index; call <see cref="DropSourceIndex.WarmUp"/> to start loading it. A copy of the last good download is kept
+    /// as <see cref="CacheFileName"/> in <paramref name="configDir"/> and used when the first download fails.
+    /// </summary>
+    public static DropSourceIndex Create(IPluginLog log, string configDir)
+    {
+        var path = Path.Combine(configDir, CacheFileName);
+        return new(Fetch, line => Write(log, line), null, () => ReadCache(path), text => WriteCache(path, text));
+    }
+
+    // Returns the saved text, or null if there is none. A copy that does not parse is set aside as .bad (replacing an older one).
+    internal static string? ReadCache(string path)
+    {
+        if (!File.Exists(path))
+            return null;
+        var text = File.ReadAllText(path);
+        try
+        {
+            DropSourceParser.Parse(text);
+            return text;
+        }
+        catch (FormatException)
+        {
+            File.Move(path, path + ".bad", overwrite: true);
+            return null;
+        }
+    }
+
+    // Writes beside the file first, then moves it over, so a crash mid-write never leaves a half-written copy.
+    internal static void WriteCache(string path, string text)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temp = path + ".tmp";
+        File.WriteAllText(temp, text);
+        File.Move(temp, path, overwrite: true);
+    }
 
     private static async Task<string> Fetch(CancellationToken ct)
     {

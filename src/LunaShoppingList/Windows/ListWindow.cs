@@ -20,6 +20,8 @@ public sealed class ListWindow : Window, IDisposable
     private const string FootnoteText = "Prices are from Universalis, exclude market tax, and may be out of date. This plugin never travels on its own. A click on a world name only asks Lifestream to go there.";
     private const string OpenedText = "Opened the results in their own window.";
     private const string TicksChangedText = "Ticks changed while prices were loading. Press Find prices again.";
+    private const string BuyOnlyLabel = "Buy only what I lack";
+    private const string AllCoveredText = "You already have everything you ticked.";
     private const string NotOnMarketSuffix = " (not sold on the market board)";
     private const string NoRetainerDataText = "Open each retainer once to count what they hold.";
     private const string ListChangedCancelledText = "The list changed, so the running build was cancelled.";
@@ -96,6 +98,8 @@ public sealed class ListWindow : Window, IDisposable
     private int generation;
     private OfferBook? pendingBook;
     private IReadOnlyList<PlanOption>? pendingOptions;
+    // What the pending build subtracted and filtered, published with the book.
+    private BuildContext? pendingContext;
     // UI thread only: the excluded ids the current build was started with.
     private HashSet<uint>? buildExclusions;
     private volatile bool building;
@@ -190,6 +194,7 @@ public sealed class ListWindow : Window, IDisposable
             generation++;
             pendingBook = null;
             pendingOptions = null;
+            pendingContext = null;
         }
         SweepRetired();
     }
@@ -391,6 +396,7 @@ public sealed class ListWindow : Window, IDisposable
             generation++;
             pendingBook = null;
             pendingOptions = null;
+            pendingContext = null;
             building = false;
             progressText = string.Empty;
             errorText = string.Empty;
@@ -772,9 +778,12 @@ public sealed class ListWindow : Window, IDisposable
 
     /// <summary>Puts the next button of the given label on the same line when it fits in the window, otherwise leaves it to wrap onto a new line.</summary>
     private static void SameLineIfFits(string nextLabel)
+        => SameLineIfFits(ImGui.CalcTextSize(nextLabel).X + ImGui.GetStyle().FramePadding.X * 2f);
+
+    /// <summary>As above for a widget <paramref name="next"/> pixels wide (a checkbox, whose width is not its label plus padding).</summary>
+    private static void SameLineIfFits(float next)
     {
         var style = ImGui.GetStyle();
-        var next = ImGui.CalcTextSize(nextLabel).X + style.FramePadding.X * 2f;
         var right = ImGui.GetCursorScreenPos().X + ImGui.GetContentRegionAvail().X;
         if (ImGui.GetItemRectMax().X + style.ItemSpacing.X + next > right)
             return;
@@ -1117,6 +1126,17 @@ public sealed class ListWindow : Window, IDisposable
                 ImGui.SetTooltip(reason);
         }
 
+        // Saved as soon as it is toggled, like the other choices on this window. Takes effect the next time Find prices starts.
+        SameLineIfFits(ImGui.CalcTextSize(BuyOnlyLabel).X + ImGui.GetFrameHeight() + ImGui.GetStyle().ItemInnerSpacing.X);
+        var buyOnlyLack = config.BuyOnlyWhatILack;
+        if (ImGui.Checkbox(BuyOnlyLabel, ref buyOnlyLack))
+        {
+            config.BuyOnlyWhatILack = buyOnlyLack;
+            config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Takes what you already hold off what is priced, so you only buy the rest.\nCounts your bags, saddlebag and retainers. The house is not counted.\nAn item whose count is not known is bought in full.");
+
         if (progressText.Length > 0)
         {
             ImGui.SameLine();
@@ -1138,11 +1158,42 @@ public sealed class ListWindow : Window, IDisposable
     {
         // Snapshots: the background task never touches UI-thread state.
         var requirements = session.Requirements.ToList();
+        var excludedIds = session.ExportExclusions();
         var exclusions = new ExclusionState();
-        exclusions.ExcludeAll(session.ExportExclusions(), true);
+        exclusions.ExcludeAll(excludedIds, true);
         // Remembered so a build that finishes after the ticks changed is not published.
-        buildExclusions = new HashSet<uint>(session.ExportExclusions());
+        buildExclusions = new HashSet<uint>(excludedIds);
         var scope = config.LastScope;
+
+        // Listings older than the chosen number of hours are ignored (0 = keep every listing).
+        var maxAgeHours = Math.Clamp(config.MaxListingAgeHours, 0, Configuration.MaxListingAgeHoursLimit);
+        var listingFilter = new ListingFilter(maxAgeHours > 0 ? TimeSpan.FromHours(maxAgeHours) : null, DateTimeOffset.UtcNow);
+        var buildContext = new BuildContext(BuildContext.None.Held, BuildContext.None.FullyCovered, maxAgeHours);
+
+        // Buy only what I lack: the ticked items are reduced by what is held (bags, saddlebag, retainers, never the house) here on the
+        // UI thread, where the owned snapshot is read. Unticked items are passed on unchanged so they are still listed as skipped.
+        if (config.BuyOnlyWhatILack)
+        {
+            var wanted = requirements.Where(r => !excludedIds.Contains(r.ItemId)).ToList();
+            var subtraction = OwnedSubtraction.Apply(wanted, OwnedEverywhere);
+            if (subtraction.Remaining.Count == 0)
+            {
+                // Nothing to buy: no request is made, and the button stays usable.
+                lock (buildGate)
+                {
+                    generation++;
+                    pendingBook = null;
+                    pendingOptions = null;
+                    pendingContext = BuildContext.None;
+                    building = false;
+                    errorText = string.Empty;
+                    progressText = AllCoveredText;
+                }
+                return;
+            }
+            requirements = subtraction.Remaining.Concat(requirements.Where(r => excludedIds.Contains(r.ItemId))).ToList();
+            buildContext = new BuildContext(subtraction.Held, subtraction.FullyCovered, maxAgeHours);
+        }
 
         int gen;
         lock (buildGate)
@@ -1150,6 +1201,7 @@ public sealed class ListWindow : Window, IDisposable
             gen = ++generation;
             pendingBook = null;
             pendingOptions = null;
+            pendingContext = BuildContext.None;
             building = true;
             errorText = string.Empty;
             progressText = "Starting...";
@@ -1165,7 +1217,7 @@ public sealed class ListWindow : Window, IDisposable
         {
             try
             {
-                var result = await service.BuildOfferBookAsync(requirements, scope, exclusions, progress, token).ConfigureAwait(false);
+                var result = await service.BuildOfferBookAsync(requirements, scope, exclusions, progress, token, listingFilter).ConfigureAwait(false);
                 // The trade-off options are computed here, on the build task, so the draw thread never runs the search.
                 token.ThrowIfCancellationRequested();
                 IReadOnlyList<PlanOption> options;
@@ -1185,6 +1237,7 @@ public sealed class ListWindow : Window, IDisposable
                 {
                     pendingBook = result;
                     pendingOptions = options;
+                    pendingContext = buildContext;
                     progressText = "Done.";
                 });
             }
@@ -1244,12 +1297,15 @@ public sealed class ListWindow : Window, IDisposable
     {
         OfferBook? book;
         IReadOnlyList<PlanOption>? options;
+        BuildContext? context;
         lock (buildGate)
         {
             book = pendingBook;
             options = pendingOptions;
+            context = pendingContext;
             pendingBook = null;
             pendingOptions = null;
+            pendingContext = null;
         }
         if (book == null) return;
 
@@ -1262,7 +1318,7 @@ public sealed class ListWindow : Window, IDisposable
 
         try
         {
-            host.ShowResults(key, title, book, options ?? Array.Empty<PlanOption>());
+            host.ShowResults(key, title, book, options ?? Array.Empty<PlanOption>(), context ?? BuildContext.None);
             progressText = OpenedText;
         }
         catch (Exception ex)

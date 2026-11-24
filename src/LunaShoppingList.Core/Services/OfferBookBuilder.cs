@@ -10,12 +10,14 @@ public static class OfferBookBuilder
     /// (ties: newer review first, then NQ first, then larger quantity first). Worlds with no usable listing are omitted; an item
     /// with no offers anywhere still appears with an empty world list. Items are ordered by id; worlds as documented on
     /// <see cref="ItemOffers.Worlds"/>.
+    /// An optional <paramref name="filter"/> drops listings whose review is older than <c>Now - MaxAge</c> (exactly that old is kept; an unknown review time is kept); the count per item is <see cref="ItemOffers.DroppedListings"/>.
     /// </summary>
     public static OfferBook Build(
         IReadOnlyList<Requirement> requirements,
         IReadOnlyList<ItemListings> listings,
         IReadOnlySet<uint> allowedWorldIds,
-        ExclusionState exclusions)
+        ExclusionState exclusions,
+        ListingFilter? filter = null)
     {
         ArgumentNullException.ThrowIfNull(requirements);
         ArgumentNullException.ThrowIfNull(listings);
@@ -47,8 +49,11 @@ public static class OfferBookBuilder
             }
 
             var worlds = new List<WorldOffer>();
-            if (listingsByItem.TryGetValue(itemId, out var candidates))
+            var dropped = 0;
+            if (listingsByItem.TryGetValue(itemId, out var usable))
             {
+                var candidates = usable.Where(l => !IsTooOld(l, filter)).ToList();
+                dropped = usable.Count - candidates.Count;
                 foreach (var g in candidates.GroupBy(l => l.WorldId))
                 {
                     var name = g.Select(l => l.WorldName).OrderBy(n => n, StringComparer.Ordinal).First();
@@ -64,11 +69,15 @@ public static class OfferBookBuilder
             }
 
             var ordered = OrderWorlds(worlds, qty);
-            items.Add(new ItemOffers(itemId, qty, ordered));
+            items.Add(new ItemOffers(itemId, qty, ordered) { DroppedListings = dropped });
         }
 
         return new OfferBook(items, skipped);
     }
+
+    /// <summary>True when the filter has a maximum age and the listing was last reviewed before <c>Now - MaxAge</c>. A review time at or before the Unix epoch is unknown and never too old.</summary>
+    private static bool IsTooOld(Listing l, ListingFilter? filter)
+        => filter?.MaxAge is TimeSpan maxAge && l.LastReview > DateTimeOffset.UnixEpoch && l.LastReview < filter.Now - maxAge;
 
     /// <summary>Worlds able to supply every needed unit first (cheapest total first), then the rest (most units, then lowest average unit price); name and id break ties.</summary>
     private static List<WorldOffer> OrderWorlds(List<WorldOffer> worlds, int needed)

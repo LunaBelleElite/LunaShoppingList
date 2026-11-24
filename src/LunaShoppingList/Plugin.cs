@@ -51,7 +51,7 @@ public sealed class Plugin : IDalamudPlugin
         ItemInfo.WarmUp();
         ItemSources = new LuminaItemSources(DataManager, Log);
         ItemSources.WarmUp();
-        DropSources = HttpDropSources.Create(Log);
+        DropSources = HttpDropSources.Create(Log, PluginInterface.GetPluginConfigDirectory());
         DropSources.WarmUp();
         WorldData = new DalamudWorldData(PlayerState, DataManager);
         ArtisanLists = new ArtisanListSource(PluginInterface, Log);
