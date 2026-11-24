@@ -39,6 +39,7 @@ public sealed class Plugin : IDalamudPlugin
     internal ShoppingListService ShoppingService { get; }
     internal OwnedItemsService OwnedItems { get; }
     internal LifestreamService Lifestream { get; }
+    internal AllaganCraftListAdapter CraftLists { get; }
     private readonly DiagnosticDump diagnosticDump;
 
     public Plugin()
@@ -61,11 +62,12 @@ public sealed class Plugin : IDalamudPlugin
         ShoppingService = new ShoppingListService(WorldData, universalis, ItemInfo.IsMarketable);
         OwnedItems = new OwnedItemsService(PluginInterface, Framework, GameInventory, GameGui, PlayerState, Condition, Log);
         Lifestream = new LifestreamService(PluginInterface, Log);
+        CraftLists = new AllaganCraftListAdapter(PluginInterface, Log);
         diagnosticDump = new DiagnosticDump(DataManager, PlayerState, Log, ChatGui, ArtisanLists, ItemInfo);
 
         Windows = new WindowManager(WindowSystem, Configuration, ArtisanLists, ItemInfo, RecipeData, WorldData, ShoppingService,
             new MaterialsCalculator(RecipeData), OwnedItems, Lifestream, ItemSources, DropSources, Log);
-        Browser = new ListBrowserWindow(Configuration, ArtisanLists, ItemInfo, ItemInfo, RecipeData, RecipeData, Windows, Log);
+        Browser = new ListBrowserWindow(Configuration, ArtisanLists, ItemInfo, ItemInfo, RecipeData, RecipeData, Windows, CraftLists, Log);
         WindowSystem.AddWindow(Browser);
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)

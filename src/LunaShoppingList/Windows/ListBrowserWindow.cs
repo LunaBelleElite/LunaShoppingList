@@ -43,6 +43,14 @@ public sealed class ListBrowserWindow : Window
     private const string ShareTeamcraftTooltip = "Copies the Teamcraft link so you can send it to another person. They open it as a website; it does not work in Teamcraft's own import dialog. To use it yourself, press Open in Teamcraft instead.";
     private const string ExcludeCraftedTooltip = "When a list opens, ingredients that can be crafted start unticked, on top of your saved ticks. Crystals, shards and clusters are never touched.";
     private const string NotCraftableText = "This item cannot be crafted";
+    private const string AllaganMissingText = "Allagan Tools isn't loaded, or hasn't finished starting. Install it, or wait a moment and press Refresh lists.";
+    private const string AllaganNoListsText = "Allagan Tools has no craft lists yet. Make one there, then press Refresh lists.";
+    private const string AllaganPickFirstText = "Click a list first.";
+    private const string AllaganSaveTooltip = "Keeps this Allagan Tools list as one of your shopping lists. Its finished items stay goals, so the materials follow the recipes.";
+    private const string AllaganHelpText = "Click a list to open it. Only its finished items are read, and normal and high quality are counted together.";
+    private const string SendToAllaganTooltip = "Creates a new craft list in Allagan Tools with this list's goals. Allagan Tools can't delete it again, so sending twice makes two lists. High quality isn't kept.";
+    private const string SentRecentlyText = "Sent a moment ago. Allagan Tools can't delete a list, so sending again makes another one.";
+    private const long SentGuardMs = 5000;
     // The text boxes count UTF-8 bytes; the 60-character name limit itself is checked when the name is used.
     private const int NameBoxMaxBytes = CustomListOps.MaxNameLength * 4;
 
@@ -54,6 +62,7 @@ public sealed class ListBrowserWindow : Window
     private readonly IRecipeData recipeData;
     private readonly WindowManager manager;
     private readonly IPluginLog log;
+    private readonly ICraftListSource craftLists;
 
     // UI-thread state.
     private IReadOnlyList<ArtisanListInfo> lists = [];
@@ -82,6 +91,20 @@ public sealed class ListBrowserWindow : Window
     private string ioNotice = string.Empty;
     private string ioWarn = string.Empty;
     private bool ioInImport;
+
+    // Allagan Tools lists tab. Availability and names are read from the other plugin only when the window or a tab opens, on
+    // Refresh lists and after a send, never per frame.
+    private bool craftAvailable;
+    private IReadOnlyList<CraftListInfo> craftInfos = [];
+    private string craftFilter = string.Empty;
+    private string? craftSelectedKey;
+    private string craftNotice = string.Empty;
+    private string craftWarn = string.Empty;
+    private bool allaganTabOpen;
+    private bool exportTabOpen;
+    // The export selection ("c" + list id, or "a" + Artisan list id) last sent to Allagan Tools and when, so one click never sends twice.
+    private string? sentSelection;
+    private long sentAtMs;
 
     // 'My shopping lists' tab state. Everything below belongs to the selected list and is reset when the selection changes.
     private string newListName = string.Empty;
@@ -172,7 +195,7 @@ public sealed class ListBrowserWindow : Window
     }
 
     internal ListBrowserWindow(Configuration config, IArtisanListSource artisan, IItemInfo items, IItemCatalog catalog,
-        IRecipeLookup recipes, IRecipeData recipeData, WindowManager manager, IPluginLog log)
+        IRecipeLookup recipes, IRecipeData recipeData, WindowManager manager, ICraftListSource craftLists, IPluginLog log)
         : base("Luna Shopping List##LunaShoppingListBrowser")
     {
         this.config = config;
@@ -182,6 +205,7 @@ public sealed class ListBrowserWindow : Window
         this.recipes = recipes;
         this.recipeData = recipeData;
         this.manager = manager;
+        this.craftLists = craftLists;
         this.log = log;
         Size = new Vector2(380, 560);
         SizeCondition = ImGuiCond.FirstUseEver;
@@ -191,6 +215,7 @@ public sealed class ListBrowserWindow : Window
     {
         // One IPC call per opening, never per frame.
         RefreshLists();
+        RefreshCraftLists();
     }
 
     public override void OnClose()
@@ -204,6 +229,7 @@ public sealed class ListBrowserWindow : Window
     {
         try
         {
+            DrawSharedSettings();
             // Every Begin is paired with its End in a finally, so an exception never leaves the ImGui stack unbalanced.
             if (ImGui.BeginTabBar("##lslTabs"))
             {
@@ -219,6 +245,29 @@ public sealed class ListBrowserWindow : Window
                         {
                             ImGui.EndTabItem();
                         }
+                    }
+                    if (ImGui.BeginTabItem("Allagan Tools lists###lslAllagan"))
+                    {
+                        try
+                        {
+                            // One refresh when the tab opens, never per frame.
+                            if (!allaganTabOpen)
+                            {
+                                allaganTabOpen = true;
+                                RefreshCraftLists();
+                            }
+                            DrawAllaganLists();
+                        }
+                        finally
+                        {
+                            ImGui.EndTabItem();
+                        }
+                    }
+                    else
+                    {
+                        allaganTabOpen = false;
+                        craftNotice = string.Empty;
+                        craftWarn = string.Empty;
                     }
                     if (ImGui.BeginTabItem("My shopping lists"))
                     {
@@ -242,6 +291,12 @@ public sealed class ListBrowserWindow : Window
                     {
                         try
                         {
+                            // The export row needs to know whether Allagan Tools is ready: one refresh when the tab opens.
+                            if (!exportTabOpen)
+                            {
+                                exportTabOpen = true;
+                                RefreshCraftLists();
+                            }
                             DrawImportExport();
                         }
                         finally
@@ -251,6 +306,7 @@ public sealed class ListBrowserWindow : Window
                     }
                     else
                     {
+                        exportTabOpen = false;
                         ioNotice = string.Empty;
                         ioWarn = string.Empty;
                     }
@@ -307,7 +363,8 @@ public sealed class ListBrowserWindow : Window
         }
         else
         {
-            var footer = ImGui.GetFrameHeightWithSpacing() * (UntickRowWraps() ? 3 : 2) + (hiddenCount > 0 ? ImGui.GetTextLineHeightWithSpacing() * 3 : 0);
+            // Room for the Refresh lists row (the two shared settings now sit above the tab bar) and the hidden-lists note.
+            var footer = ImGui.GetFrameHeightWithSpacing() + (hiddenCount > 0 ? ImGui.GetTextLineHeightWithSpacing() * 3 : 0);
             var height = Math.Max(ImGui.GetTextLineHeightWithSpacing() * 4, ImGui.GetContentRegionAvail().Y - footer);
             // EndChild is called whatever BeginChild returned.
             try
@@ -331,22 +388,9 @@ public sealed class ListBrowserWindow : Window
             }
         }
 
-        var wraps = UntickRowWraps();
         if (ImGui.Button("Refresh lists")) RefreshLists();
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Reads Artisan's saved lists again.");
-        // The checkbox goes on the same line only when it fits; otherwise it wraps instead of being clipped.
-        if (!wraps)
-            ImGui.SameLine();
-        var excludeCrafted = config.ExcludeCraftedItems;
-        if (ImGui.Checkbox(UntickLabel, ref excludeCrafted))
-        {
-            config.ExcludeCraftedItems = excludeCrafted;
-            config.Save();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(ExcludeCraftedTooltip);
-        DrawListingAge();
         if (hiddenCount > 0 && lists.Count > 0)
         {
             ImGui.PushTextWrapPos(0f);
@@ -363,6 +407,21 @@ public sealed class ListBrowserWindow : Window
 
     private const int MaxListingAgeLimit = 720;
 
+    /// <summary>The two settings that apply to every list, above the tab bar so they show on every tab.</summary>
+    private void DrawSharedSettings()
+    {
+        var excludeCrafted = config.ExcludeCraftedItems;
+        if (ImGui.Checkbox(UntickLabel, ref excludeCrafted))
+        {
+            config.ExcludeCraftedItems = excludeCrafted;
+            config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(ExcludeCraftedTooltip);
+        DrawListingAge();
+        ImGui.Spacing();
+    }
+
     /// <summary>
     /// The listing age setting: an integer box on a local copy (an ImGui int box edits the variable it is given, so the saved value
     /// is only written when an edit happened). The value is kept inside 0 to 720 and saved once the box is left, not on every key.
@@ -377,14 +436,6 @@ public sealed class ListBrowserWindow : Window
             config.Save();
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Set 0 to turn this off.");
-    }
-
-    /// <summary>True when the Refresh lists button and the untick checkbox do not fit on one line at the current width.</summary>
-    private static bool UntickRowWraps()
-    {
-        var style = ImGui.GetStyle();
-        var checkboxWidth = ImGui.GetFrameHeight() + style.ItemInnerSpacing.X + ImGui.CalcTextSize(UntickLabel).X;
-        return ButtonWidth("Refresh lists") + style.ItemSpacing.X + checkboxWidth > ImGui.GetContentRegionAvail().X;
     }
 
     private void RefreshLists()
@@ -405,6 +456,236 @@ public sealed class ListBrowserWindow : Window
         {
             log.Error(ex, "Reading Artisan's lists failed");
             SetMessage("Could not read the lists: " + ex.Message);
+        }
+    }
+
+    // ---- Allagan Tools lists tab ----
+
+    /// <summary>
+    /// Asks Allagan Tools whether it is ready and for its list names. Called when the window opens, when the Allagan Tools lists or
+    /// Import / Export tab opens, after a send, and by Refresh lists: never per frame, because the readiness check costs several IPC calls.
+    /// </summary>
+    private void RefreshCraftLists()
+    {
+        try
+        {
+            craftAvailable = craftLists.IsAvailable;
+            craftInfos = craftAvailable ? craftLists.GetLists() : [];
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Reading Allagan Tools' craft lists failed");
+            craftAvailable = false;
+            craftInfos = [];
+        }
+        if (craftSelectedKey != null && !craftInfos.Any(l => l.Key == craftSelectedKey))
+            craftSelectedKey = null;
+    }
+
+    private void DrawAllaganLists()
+    {
+        if (!craftAvailable)
+        {
+            ImGui.TextWrapped(AllaganMissingText);
+            if (ImGui.Button("Refresh lists##craftRefresh"))
+                PressCraftRefresh();
+            return;
+        }
+
+        ImGui.SetNextItemWidth(-1);
+        ImGui.InputTextWithHint("##craftFilter", "Filter...", ref craftFilter, 100);
+
+        if (craftInfos.Count == 0)
+        {
+            ImGui.TextWrapped(AllaganNoListsText);
+        }
+        else
+        {
+            var messageLines = craftNotice.Length > 0 || craftWarn.Length > 0 ? 3 : 0;
+            var footer = ImGui.GetFrameHeightWithSpacing() * 2 + ImGui.GetTextLineHeightWithSpacing() * (3 + messageLines);
+            var height = Math.Max(ImGui.GetTextLineHeightWithSpacing() * 4, ImGui.GetContentRegionAvail().Y - footer);
+            CraftListInfo? clicked = null;
+            // EndChild is called whatever BeginChild returned.
+            try
+            {
+                if (ImGui.BeginChild("##craftScroll", new Vector2(-1, height), true))
+                {
+                    foreach (var l in craftInfos)
+                    {
+                        if (craftFilter.Length > 0 && !l.Name.Contains(craftFilter, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        ImGui.PushID("k" + l.Key);
+                        try
+                        {
+                            if (SelectableText("##row", l.Name, l.Key == craftSelectedKey))
+                                clicked = l;
+                        }
+                        finally
+                        {
+                            ImGui.PopID();
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                ImGui.EndChild();
+            }
+            if (clicked != null)
+            {
+                craftSelectedKey = clicked.Key;
+                OpenCraftList(clicked);
+            }
+        }
+
+        var avail = ImGui.GetContentRegionAvail().X;
+        if (ImGui.Button("Refresh lists##craftRefresh"))
+            PressCraftRefresh();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Reads Allagan Tools' craft lists again.");
+        var used = ButtonWidth("Refresh lists");
+        NextInRow(ref used, avail, "Save as shopping list");
+        var noSelection = craftSelectedKey == null;
+        ImGui.BeginDisabled(noSelection);
+        try
+        {
+            if (ImGui.Button("Save as shopping list##craftSave"))
+                SaveCraftList();
+        }
+        finally
+        {
+            ImGui.EndDisabled();
+        }
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(noSelection ? AllaganPickFirstText : AllaganSaveTooltip);
+
+        ImGui.PushTextWrapPos(0f);
+        try
+        {
+            ImGui.TextDisabled(AllaganHelpText);
+        }
+        finally
+        {
+            ImGui.PopTextWrapPos();
+        }
+        if (craftNotice.Length > 0)
+            WrappedColored(new Vector4(0.5f, 0.9f, 0.5f, 1f), craftNotice);
+        if (craftWarn.Length > 0)
+            WrappedColored(new Vector4(1f, 0.6f, 0.3f, 1f), craftWarn);
+    }
+
+    private void PressCraftRefresh()
+    {
+        craftNotice = string.Empty;
+        craftWarn = string.Empty;
+        RefreshCraftLists();
+    }
+
+    /// <summary>
+    /// Reads one Allagan Tools list (on the click only) as a temporary list: finished items that have a recipe become goals, the
+    /// others plain rows, so nothing is dropped. Null, with the reason in <see cref="craftWarn"/>, when it cannot be read.
+    /// </summary>
+    private CustomList? ReadCraftList(CraftListInfo info, bool forSave = false)
+    {
+        SetMessage(string.Empty);
+        craftNotice = string.Empty;
+        craftWarn = string.Empty;
+        // Working out recipes would build the recipe index on the draw thread: start it in the background and ask for another click.
+        if (recipes is LuminaRecipeData { IsResultIndexReady: false } data)
+        {
+            if (data.IsResultIndexFailed)
+            {
+                data.RetryNow();
+                craftWarn = RecipesFailedText;
+            }
+            else
+            {
+                data.WarmUp();
+                craftWarn = RecipesLoadingText + (forSave ? " Press it again in a moment." : " Click the list again in a moment.");
+            }
+            return null;
+        }
+        var read = craftLists.GetGoals(info.Key);
+        if (!read.Ok)
+        {
+            // An unknown key means the list was removed or renamed since the list of lists was read.
+            craftWarn = read.Message == CraftListOps.UnknownListMessage ? read.Message + " Press Refresh lists." : read.Message;
+            return null;
+        }
+        if (read.Goals.Count == 0)
+        {
+            craftWarn = $"\"{info.Name}\" has no finished items to shop for.";
+            return null;
+        }
+        var list = new CustomList { Name = info.Name };
+        foreach (var g in read.Goals)
+        {
+            var recipe = recipes.FindRecipeForItem(g.ItemId);
+            if (recipe != null && recipe.Ingredients.Any(i => i.ItemId != 0 && i.Amount >= 1))
+                CustomListOps.AddGoal(list, g.ItemId, g.Quantity);
+            else
+                CustomListOps.AddItem(list, g.ItemId, g.Quantity);
+        }
+        return list;
+    }
+
+    /// <summary>Opens an Allagan Tools list in its own list window, its materials worked out from its goals.</summary>
+    private void OpenCraftList(CraftListInfo info)
+    {
+        try
+        {
+            if (ReadCraftList(info) is not { } list)
+                return;
+            var effective = CustomListOps.EffectiveRequirements(list, recipes);
+            if (effective.Requirements.Count == 0)
+            {
+                craftWarn = effective.Problems.Count > 0
+                    ? "Could not work out the materials: " + effective.Problems[0].Error + "."
+                    : "There is nothing to shop for in that list.";
+                return;
+            }
+            manager.OpenFromCraftList(info.Name, effective.Requirements);
+            if (effective.Problems.Count > 0)
+            {
+                var left = string.Join(", ", effective.Problems.Take(MaxSkippedNames).Select(p => $"{ItemName(p.ItemId)} ({p.Error})"));
+                var more = effective.Problems.Count > MaxSkippedNames ? $", +{effective.Problems.Count - MaxSkippedNames} more" : string.Empty;
+                craftWarn = "Left out: " + left + more;
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Opening an Allagan Tools list failed");
+            craftWarn = "Could not open the list: " + ex.Message;
+        }
+    }
+
+    /// <summary>Saves the selected Allagan Tools list as a shopping list of its own: goals stay goals, so the materials follow the recipes.</summary>
+    private void SaveCraftList()
+    {
+        try
+        {
+            var info = craftInfos.FirstOrDefault(l => l.Key == craftSelectedKey);
+            if (info == null)
+            {
+                craftWarn = AllaganPickFirstText;
+                return;
+            }
+            if (ReadCraftList(info, forSave: true) is not { } list)
+                return;
+            var saved = CreateNamedList(TextLimit.CutToChars(info.Name, CustomListOps.MaxNameLength), null);
+            if (saved == null)
+                return;
+            saved.Goals.AddRange(list.Goals);
+            saved.Items.AddRange(list.Items);
+            InvalidateMaterials();
+            config.Save();
+            var count = saved.Goals.Count + saved.Items.Count;
+            craftNotice = $"Saved {Plural.Of(count, "item")} as {saved.Name} in My shopping lists.";
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Saving an Allagan Tools list failed");
+            craftWarn = "Could not save the list: " + ex.Message;
         }
     }
 
@@ -1528,6 +1809,28 @@ public sealed class ListBrowserWindow : Window
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             ImGui.SetTooltip(isArtisan ? ArtisanAlreadyText : !selected ? ChooseListFirstText : CopyForArtisanTooltip);
 
+        NextInRow(ref exportUsed, exportAvail, "Send to Allagan Tools");
+        var sendBlock = SendBlockReason(selected);
+        ImGui.BeginDisabled(sendBlock != null);
+        try
+        {
+            if (ImGui.Button("Send to Allagan Tools")) SendToAllagan();
+        }
+        finally
+        {
+            ImGui.EndDisabled();
+        }
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(sendBlock ?? SendToAllaganTooltip);
+
+        // Names are compared from the cached list, so this costs no IPC.
+        if (craftAvailable && selected && ExportDisplayName() is { } sendName
+            && craftInfos.Any(l => string.Equals(l.Name, CraftListOps.ExportName(sendName), StringComparison.OrdinalIgnoreCase)))
+        {
+            WrappedColored(new Vector4(1f, 0.6f, 0.3f, 1f),
+                $"Allagan Tools already has a craft list called \"{CraftListOps.ExportName(sendName)}\". Sending again makes a second one.");
+        }
+
         ImGui.PushTextWrapPos(0f);
         try
         {
@@ -1590,6 +1893,90 @@ public sealed class ListBrowserWindow : Window
         exportCustomId = customId;
         exportArtisanId = artisanId;
         SetMessage(string.Empty);
+    }
+
+    private string CurrentSelectionKey() => exportCustomId != null ? "c" + exportCustomId : "a" + exportArtisanId;
+
+    /// <summary>The name of the selected list for the Allagan Tools list it would make, or null with no selection.</summary>
+    private string? ExportDisplayName()
+        => exportCustomId != null
+            ? config.FindCustomList(exportCustomId)?.Name
+            : exportArtisanId is { } id ? ArtisanListName(id) : null;
+
+    /// <summary>Why Send to Allagan Tools cannot be pressed right now, or null when it can. Cheap: no IPC and no file reads.</summary>
+    private string? SendBlockReason(bool selected)
+    {
+        if (!craftAvailable)
+            return AllaganMissingText;
+        if (!selected)
+            return ChooseListFirstText;
+        if (exportCustomId != null && CraftListOps.ForExport(config.FindCustomList(exportCustomId)).Count == 0)
+            return NothingToExportText;
+        if (sentSelection == CurrentSelectionKey() && Environment.TickCount64 - sentAtMs < SentGuardMs)
+            return SentRecentlyText;
+        return null;
+    }
+
+    /// <summary>
+    /// Sends the selected list to Allagan Tools as a new craft list (its goals, or its plain rows when it has none). An Artisan list
+    /// sends the finished items it crafts. Runs on the click only.
+    /// </summary>
+    private void SendToAllagan()
+    {
+        try
+        {
+            SetMessage(string.Empty);
+            if (!craftAvailable)
+                return;
+            var key = CurrentSelectionKey();
+            IReadOnlyList<Requirement> goals;
+            string name;
+            if (exportCustomId != null)
+            {
+                if (config.FindCustomList(exportCustomId) is not { } list)
+                {
+                    SetMessage("That list no longer exists.");
+                    return;
+                }
+                goals = CraftListOps.ForExport(list);
+                name = list.Name;
+            }
+            else
+            {
+                if (ExportRows() is not { } source)
+                    return;
+                var temporary = new CustomList();
+                foreach (var r in source.Rows)
+                    CustomListOps.AddItem(temporary, r.ItemId, r.Quantity);
+                goals = CraftListOps.ForExport(temporary);
+                name = source.Name;
+            }
+            ioInImport = false;
+            if (goals.Count == 0)
+            {
+                ioWarn = NothingToExportText;
+                return;
+            }
+            var result = craftLists.CreateList(CraftListOps.ExportName(name), goals);
+            if (result.Status != CraftListStatus.NotAvailable)
+            {
+                // A failed send may still have left a list behind, so a failure blocks a quick second click too.
+                sentSelection = key;
+                sentAtMs = Environment.TickCount64;
+            }
+            var text = result.Message.EndsWith('.') ? result.Message : result.Message + ".";
+            if (result.Ok)
+                ioNotice = text;
+            else
+                ioWarn = text;
+            // The new list's name now shows in the duplicate warning.
+            RefreshCraftLists();
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "Sending a list to Allagan Tools failed");
+            SetMessage("Could not send the list: " + ex.Message);
+        }
     }
 
     private string? ArtisanListName(int id)

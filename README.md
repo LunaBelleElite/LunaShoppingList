@@ -3,12 +3,12 @@
 **Turn a crafting list into a shopping list that tells you which world to buy each thing on.**
 
 Luna Shopping List is a Dalamud plugin for Final Fantasy XIV. Open one of your
-Artisan crafting lists, or a list you made in the plugin, and press Find prices.
+Artisan or Allagan Tools crafting lists, or a list you made in the plugin, and press Find prices.
 It asks Universalis what everything costs right now and shows each item once,
 with the worlds selling it. You can pick where to buy each thing yourself, or
 let it suggest the plan with the fewest worlds for what you're willing to spend.
 It also shows how many of each item you already have, can leave that out of
-the bill, and reads and writes Teamcraft and Artisan lists.
+the bill, and reads and writes Teamcraft, Artisan and Allagan Tools lists.
 
 It never travels and never buys anything. It tells you where to go. If you have
 Lifestream, clicking a world name asks Lifestream to take you there.
@@ -31,15 +31,22 @@ plugin this way, so only add repositories from people you trust.
 
 ## Pick a list
 
-Type `/lsl` to open the list browser. It has three tabs. A list you pick opens
+Type `/lsl` to open the list browser. It has four tabs. A list you pick opens
 in its own window, and Find prices there opens a results window. You can have
-several of each open at once.
+several of each open at once. Above the tabs sit **Untick crafted items when a
+list opens** and **Ignore listings older than (hours)**, which apply to every
+list. Tick the first and lists open with every craftable ingredient unticked, so
+you only buy raw materials.
 
 **Artisan crafting lists.** Click a list to open it. The filter box narrows the
-names, and **Refresh lists** reads them from Artisan again. Tick **Untick crafted
-items when a list opens** and lists open with every craftable ingredient
-unticked, so you only buy raw materials. Artisan's premade and relic lists can't
-be read here. Copy them with Artisan's **Export List** and use the Import tab.
+names, and **Refresh lists** reads them from Artisan again. Artisan's premade and
+relic lists can't be read here. Copy them with Artisan's **Export List** and use
+the Import tab.
+
+**Allagan Tools lists.** Your Allagan Tools craft lists. Click one to open it,
+and the materials are worked out with subcrafts, the same as in My shopping
+lists. **Save as shopping list** keeps a copy you can edit. If Allagan Tools
+isn't loaded, the tab says so.
 
 **My shopping lists.** Lists you build yourself.
 
@@ -69,7 +76,10 @@ be read here. Copy them with Artisan's **Export List** and use the Import tab.
   your browser. **Copy for Artisan** copies the list with every subcraft, ready
   for Artisan's **Import List From Clipboard (Artisan Export)**. It works for My
   shopping lists only. **Copy Teamcraft link** copies a link to send someone.
-  They open it in a browser, not in Teamcraft's import dialog.
+  They open it in a browser, not in Teamcraft's import dialog. **Send to
+  Allagan Tools** makes a new craft list there. Allagan Tools can't delete
+  lists over its API, so sending twice makes two, and high quality isn't kept.
+  It reads the list back and tells you if Allagan Tools didn't take it.
 - Exports only include items that can be crafted, and tell you what was left out.
 
 ## Choose what to buy
@@ -97,8 +107,8 @@ The list window shows every ingredient with a **Buy** box.
   Find prices only prices what's left after your bags, saddlebag and retainers.
   Hover it to read this. The results show `need 10 (you hold 40 of 50)`, and a
   dim note lists items you already have enough of.
-- **Ignore listings older than (hours)**, in the list browser, skips old
-  listings. It starts at 24, and 0 turns it off. The results say how many
+- **Ignore listings older than (hours)**, above the list browser's tabs, skips
+  old listings. It starts at 24, and 0 turns it off. The results say how many
   listings were hidden.
 - Click a column header to sort, and click again to reverse it. Closing the
   window puts the list's own order back.
@@ -187,8 +197,8 @@ the time you get there. Prices leave out market tax.
 - Final Fantasy XIV on the global client, with Dalamud (API level 15).
 - Artisan, to open Artisan lists. My shopping lists and Import work without it.
 - Lifestream, only for clickable world names.
-- AllaganTools if you like. When it's installed, Retainers shows the higher of
-  its count and the plugin's own.
+- Allagan Tools, to open its craft lists. It's also optional for counts: when
+  it's installed, Retainers shows the higher of its count and the plugin's own.
 - An internet connection. Prices come from Universalis. When the plugin starts
   it also downloads the monster drop list from Teamcraft's public repository on
   GitHub. That request sends nothing about you. It keeps a copy in the plugin's

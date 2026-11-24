@@ -1189,6 +1189,9 @@ public sealed class ListWindow : Window, IDisposable
                     errorText = string.Empty;
                     progressText = AllCoveredText;
                 }
+                // An open results window would keep showing the plan of an earlier build, which no longer matches. It is
+                // removed (the host queues the removal; a later build opens a new one).
+                host.HideResults(key);
                 return;
             }
             requirements = subtraction.Remaining.Concat(requirements.Where(r => excludedIds.Contains(r.ItemId))).ToList();

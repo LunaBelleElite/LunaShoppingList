@@ -120,6 +120,16 @@ internal sealed class WindowManager : IWindowHost, IDisposable
         AddList("paste-" + n, $"Pasted ingredients ({n})", null, requirements, null);
     }
 
+    /// <summary>
+    /// Opens a window for ingredients worked out from another plugin's list, titled with that list's name. Each call makes a new window.
+    /// The ingredients are already raw materials, so the 'Untick crafted items when a list opens' setting does not apply to it.
+    /// </summary>
+    public void OpenFromCraftList(string name, IReadOnlyList<Requirement> requirements)
+    {
+        var n = ++pasteCounter;
+        AddList("paste-" + n, string.IsNullOrWhiteSpace(name) ? $"Allagan Tools list ({n})" : name, null, requirements, null);
+    }
+
     private void AddList(string key, string title, int? artisanListId, IReadOnlyList<Requirement>? requirements, string? customListId)
     {
         var session = new ShoppingSession(calc, items);
@@ -163,6 +173,9 @@ internal sealed class WindowManager : IWindowHost, IDisposable
         }
         return dataCenters.GetValueOrDefault(worldId);
     }
+
+    /// <inheritdoc />
+    public void HideResults(string key) => OnResultsClosed(key);
 
     private void OnResultsClosed(string key)
     {

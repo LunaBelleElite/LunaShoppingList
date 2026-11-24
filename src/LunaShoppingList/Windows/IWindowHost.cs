@@ -21,6 +21,12 @@ internal interface IWindowHost
     /// </summary>
     void ShowResults(string key, string title, OfferBook book, IReadOnlyList<PlanOption> options, BuildContext context);
 
+    /// <summary>
+    /// Removes the results window for <paramref name="key"/> if one is open (its old plan no longer matches the list). Safe if none
+    /// is open. Called on the UI thread.
+    /// </summary>
+    void HideResults(string key);
+
     /// <summary>The list window for <paramref name="key"/> was closed: dispose it and cancel its build. Its results window stays open.</summary>
     void CloseList(string key);
 }

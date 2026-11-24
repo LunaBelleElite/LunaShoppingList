@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.17.0.0 - 2026-11-24
+
+- New Allagan Tools lists tab in the list browser. Open one of your Allagan Tools craft lists and it works out the materials, subcrafts included. If Allagan Tools isn't loaded, the tab says so.
+- New Send to Allagan Tools button in Import / Export. It makes a new craft list from one of your lists. Allagan Tools can't delete lists over its API, so sending twice makes two, and high quality isn't kept.
+- Untick crafted items when a list opens and Ignore listings older than (hours) now sit above the tabs, so you can reach them from any tab.
+- When Buy only what I lack leaves nothing to buy, the old results window closes instead of staying open.
+
 ## 0.16.0.0 - 2026-11-24
 
 - Plans and prices now assume you buy whole stacks, because the market board won't sell part of one. Totals can be higher than before and can include extra units.
