@@ -22,7 +22,7 @@
     "IsTestingExclusive": false,
     "DownloadCount": 0,
     "LastUpdate": 1795546191,
-    "Changelog": "- Big lists on busy items are now solved exactly more often, so the (estimate) tag shows up less. Prices that were already exact don't change.",
+    "Changelog": "- Big lists on busy items are solved exactly more often, so you see (estimate) less. Exact prices don't change.",
     "DownloadLinkInstall": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.17.0.1/latest.zip",
     "DownloadLinkUpdate": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.17.0.1/latest.zip",
     "DownloadLinkTesting": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.17.0.1/latest.zip"
