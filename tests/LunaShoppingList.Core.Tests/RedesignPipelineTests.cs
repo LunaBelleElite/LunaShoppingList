@@ -3,10 +3,15 @@ using LunaShoppingList.Core;
 namespace LunaShoppingList.Core.Tests;
 
 /// <summary>
-/// End-to-end tests over the real services (offer book, suggester, route summarizer, allocation state, and the original planner as
-/// a reference). Only the Universalis client and the world data are faked. Every expected number comes from an oracle that works
-/// straight from the raw listings, never from production helpers, so a wrong result in any one module cannot agree with itself.
+/// End-to-end tests over the real services (offer book, suggester, route summarizer, allocation state). Only the Universalis client
+/// and the world data are faked. Every expected number comes from an oracle that works straight from the raw listings, never from
+/// production helpers, so a wrong result in any one module cannot agree with itself.
 /// </summary>
+/// <remarks>
+/// 2026-11-24 (release 0.16.0.0, whole stacks): a listing can only be bought whole, so the oracle now enumerates every subset of an
+/// item's valid listings (<see cref="StackBruteForce"/>) instead of taking units cheapest-first. Before that date the oracle bought
+/// partial stacks and the original ShoppingPlanner (removed the same day) served as a second reference for the cheapest plan.
+/// </remarks>
 public class RedesignPipelineTests
 {
     private static readonly DateTimeOffset T0 = new(2026, 11, 1, 0, 0, 0, TimeSpan.Zero);
@@ -103,10 +108,31 @@ public class RedesignPipelineTests
 
         public int Supply(uint item) => ValidWorlds.Sum(w => Stock(item, w));
 
-        public long LineCost(uint item, uint world, int qty) => Units(item, world).Take(qty).Sum(p => (long)p);
+        // 2026-11-24: whole stacks. Each valid listing is one stack; prices below come from every subset of the stacks.
+        // Before: LineCost took the cheapest qty units (part of a stack allowed) and CheapestCost the cheapest need units overall.
 
-        public long CheapestCost(uint item, int need)
-            => ValidWorlds.SelectMany(w => Units(item, w)).Order().Take(need).Sum(p => (long)p);
+        /// <summary>The item's valid listings on the worlds <paramref name="onWorld"/> accepts, one whole stack each.</summary>
+        public List<PriceStep> Stacks(uint item, Func<uint, bool> onWorld)
+            => (Pool.GetValueOrDefault(item) ?? [])
+                .Where(l => Valid(l) && onWorld(l.WorldId))
+                .Select(l => new PriceStep(l.PricePerUnit, l.Quantity, l.Hq, l.LastReview))
+                .ToList();
+
+        private List<StackBruteForce.Subset> Subsets(uint item, uint world) => StackBruteForce.All(Stacks(item, w => w == world));
+
+        /// <summary>Gil for exactly <paramref name="qty"/> units on one world (cheapest set of its stacks); null when no set sums to it.</summary>
+        public long? ExactCost(uint item, uint world, int qty) => StackBruteForce.Exact(Subsets(item, world), qty)?.Cost;
+
+        /// <summary>Like <see cref="ExactCost"/>, but a quantity that is not a sum of whole stacks there fails the test.</summary>
+        public long LineCost(uint item, uint world, int qty)
+            => ExactCost(item, world, qty) ?? throw new Xunit.Sdk.XunitException($"{item}@{world}x{qty} is not a sum of whole stacks there");
+
+        /// <summary>The smallest sum of whole stacks on the world at or above <paramref name="units"/> (the full stock when none reaches).</summary>
+        public int SnapUp(uint item, uint world, int units)
+            => (int)Subsets(item, world).Where(s => s.Units >= units).Select(s => s.Units).DefaultIfEmpty((long)Stock(item, world)).Min();
+
+        /// <summary>Cheapest set of the item's stacks on every valid world with at least <paramref name="need"/> units (all of them when short).</summary>
+        public long CheapestCost(uint item, int need) => StackBruteForce.Cover(StackBruteForce.All(Stacks(item, ValidWorlds.Contains)), need).Cost;
     }
 
     private sealed class FakeWorlds(Fx fx) : IWorldData
@@ -137,8 +163,10 @@ public class RedesignPipelineTests
         }
     }
 
+    // 2026-11-24: ServicePlan (ShoppingListService.BuildPlanAsync) and PlannerPlan (ShoppingPlanner.Plan) were dropped from the run
+    // when the partial-stack planner was removed; the whole-stack oracle in Fx is the reference for the cheapest plan instead.
     private sealed record Run(OfferBook Book, IReadOnlyList<AllocationLine> Cheap, IReadOnlyList<AllocationLine> Fewest,
-        SuggestionComparison Cmp, ShoppingPlan ServicePlan, ShoppingPlan PlannerPlan, FakeClient Client);
+        SuggestionComparison Cmp, FakeClient Client);
 
     private static async Task<Run> RunAsync(Fx fx)
     {
@@ -149,17 +177,10 @@ public class RedesignPipelineTests
             ex.SetExcluded(id, true);
 
         var book = await svc.BuildOfferBookAsync(fx.Reqs, TravelScopeKind.CrossWorld, ex, null, default);
-        // the plan path gets its own fake so the offer-book client's recorded calls stay one set
-        var servicePlan = await new ShoppingListService(new FakeWorlds(fx), new FakeClient(fx))
-            .BuildPlanAsync(fx.Reqs, TravelScopeKind.CrossWorld, ex, null, default);
         var cheap = Suggester.Suggest(book, SuggestionMode.Cheapest);
         var fewest = Suggester.Suggest(book, SuggestionMode.FewestWorlds);
         var cmp = RouteSummarizer.Compare(book, cheap, fewest);
-
-        // The original planner, fed the raw pool (invalid and leaked listings included) and the hand-stated allowed worlds.
-        var raw = fx.Pool.Select(kv => new ItemListings(kv.Key, kv.Value)).ToList();
-        var plannerPlan = ShoppingPlanner.Plan(fx.Reqs, raw, Fx.ValidWorlds, ex);
-        return new Run(book, cheap, fewest, cmp, servicePlan, plannerPlan, client);
+        return new Run(book, cheap, fewest, cmp, client);
     }
 
     private static string Flat(IEnumerable<AllocationLine> ls) => string.Join(";", ls.Select(l => $"{l.ItemId}@{l.WorldId}x{l.Quantity}"));
@@ -190,11 +211,16 @@ public class RedesignPipelineTests
             Assert.True(need.ContainsKey(l.ItemId), $"{mode}: line for an item that is excluded, zero-quantity or unknown: {l}");
             Assert.True(Fx.ValidWorlds.Contains(l.WorldId), $"{mode}: line on a world outside the allowed set: {l}");
             Assert.True(l.Quantity <= fx.Stock(l.ItemId, l.WorldId), $"{mode}: {l} exceeds stock {fx.Stock(l.ItemId, l.WorldId)}");
+            Assert.True(fx.ExactCost(l.ItemId, l.WorldId, l.Quantity) is not null, $"{mode}: {l} is not a sum of whole stacks on that world");
         }
         foreach (var (item, n) in need)
         {
+            // 2026-11-24: was total == min(n, supply). Whole stacks can overshoot the need (surplus), so the total is at least
+            // min(n, supply), and capped at the need it is exactly that.
             var total = lines.Where(l => l.ItemId == item).Sum(l => l.Quantity);
-            Assert.True(total == Math.Min(n, fx.Supply(item)), $"{mode}: item {item} gets {total}, expected min({n},{fx.Supply(item)})");
+            var floor = Math.Min(n, fx.Supply(item));
+            Assert.True(total >= floor, $"{mode}: item {item} gets {total}, expected at least min({n},{fx.Supply(item)})");
+            Assert.Equal(floor, Math.Min(total, n));
         }
     }
 
@@ -227,7 +253,8 @@ public class RedesignPipelineTests
             foreach (var w in item.Worlds)
             {
                 Assert.Equal(fx.Stock(item.ItemId, w.WorldId), w.UnitsForSale);
-                Assert.Equal(fx.LineCost(item.ItemId, w.WorldId, w.UnitsForSale), w.CostFor(w.UnitsForSale));
+                // 2026-11-24: was w.CostFor(w.UnitsForSale) (partial-stack pricing). The whole supply is every stack.
+                Assert.Equal((long?)fx.LineCost(item.ItemId, w.WorldId, w.UnitsForSale), w.ExactCost(w.UnitsForSale));
             }
         }
         var skipped = fx.SkippedExpected();
@@ -266,8 +293,9 @@ public class RedesignPipelineTests
             var (item, world, q) = (line.ItemId, line.WorldId, line.Quantity);
             var before = Fresh(book, lines).Summarize();
             var otherLinesOnWorld = lines.Count(l => l.WorldId == world && l.ItemId != item);
-            var beforeMissing = before.Unmet.FirstOrDefault(u => u.ItemId == item)?.Missing ?? 0;
             var need = fx.Need()[item];
+            // units of this item bought on every other world
+            var elsewhere = lines.Where(l => l.ItemId == item).Sum(l => l.Quantity) - q;
 
             // zero and a negative quantity both remove the line
             foreach (var target in new[] { 0, -7 })
@@ -280,19 +308,25 @@ public class RedesignPipelineTests
                 Assert.Equal(before.GrandTotal - fx.LineCost(item, world, q), after.GrandTotal);
                 Assert.Equal(before.WorldCount - (otherLinesOnWorld == 0 ? 1 : 0), after.WorldCount);
                 Assert.Equal(otherLinesOnWorld > 0, after.Worlds.Any(w => w.WorldId == world));
-                Assert.Equal(beforeMissing + q, after.Unmet.FirstOrDefault(u => u.ItemId == item)?.Missing ?? 0);
+                // 2026-11-24: was beforeMissing + q. A line can now carry surplus, so the shortfall is what the rest leaves.
+                Assert.Equal(Math.Max(0, need - elsewhere), after.Unmet.FirstOrDefault(u => u.ItemId == item)?.Missing ?? 0);
                 AssertStateConsistent(fx, s);
             }
 
             // reduced by one unit
             if (q > 1)
             {
+                // 2026-11-24: was "buys exactly q - 1, one more unit missing". A quantity snaps up to the next sum of whole stacks,
+                // so q - 1 becomes q - 1 itself when some stacks sum to it, otherwise q again (q is such a sum).
+                var snapped = fx.SnapUp(item, world, q - 1);
+                Assert.True(snapped == q - 1 || snapped == q, $"snap of {q - 1} on {item}@{world} gave {snapped}");
                 var s = Fresh(book, lines);
                 s.SetQuantity(item, world, q - 1);
+                Assert.Equal(snapped, s.GetQuantity(item, world));
                 var after = s.Summarize();
-                Assert.Equal(before.GrandTotal - fx.LineCost(item, world, q) + fx.LineCost(item, world, q - 1), after.GrandTotal);
+                Assert.Equal(before.GrandTotal - fx.LineCost(item, world, q) + fx.LineCost(item, world, snapped), after.GrandTotal);
                 Assert.Equal(before.WorldCount, after.WorldCount);
-                Assert.Equal(beforeMissing + 1, after.Unmet.FirstOrDefault(u => u.ItemId == item)?.Missing ?? 0);
+                Assert.Equal(Math.Max(0, need - elsewhere - snapped), after.Unmet.FirstOrDefault(u => u.ItemId == item)?.Missing ?? 0);
                 AssertStateConsistent(fx, s);
             }
 
@@ -356,12 +390,11 @@ public class RedesignPipelineTests
         AssertSummary(fx, cheapSum, r.Cheap);
         AssertSummary(fx, fewSum, r.Fewest);
 
-        // Cheapest equals the original planner, the service's own plan, and a plain sorted-prices oracle
-        Assert.Equal(r.PlannerPlan.Worlds.Sum(w => w.Total), cheapSum.GrandTotal);
-        Assert.Equal(r.ServicePlan.Worlds.Sum(w => w.Total), cheapSum.GrandTotal);
-        Assert.Equal(fx.Need().Sum(kv => fx.CheapestCost(kv.Key, Math.Min(kv.Value, fx.Supply(kv.Key)))), cheapSum.GrandTotal);
-        Assert.Equal(r.PlannerPlan.Shortfalls.Select(s => (s.ItemId, s.Missing)), cheapSum.Unmet.Select(u => (u.ItemId, u.Missing)));
-        Assert.Equal(r.PlannerPlan.Skipped.Select(s => (s.ItemId, s.Quantity)), r.Book.Skipped.Select(s => (s.ItemId, s.Quantity)));
+        // Cheapest costs exactly the brute-force cheapest set of whole stacks per item.
+        // 2026-11-24: it was also compared with ShoppingPlanner and BuildPlanAsync (partial stacks, removed that day) for its
+        // total, shortfalls and skipped items; the shortfalls and skipped items are checked against the oracle in AssertSummary
+        // and AssertBook, and the total here.
+        Assert.Equal(fx.Need().Sum(kv => fx.CheapestCost(kv.Key, kv.Value)), cheapSum.GrandTotal);
 
         // Fewest-worlds never visits more worlds and never pays less
         Assert.True(fewSum.WorldCount <= cheapSum.WorldCount, $"fewest visits {fewSum.WorldCount}, cheapest {cheapSum.WorldCount}");
@@ -467,23 +500,41 @@ public class RedesignPipelineTests
         var by = ByItem(r.Cheap);
         var lines = r.Cmp.Cheapest.Worlds.SelectMany(w => w.Lines).ToList();
 
-        // 40@50 + 30@55 + 29@60
-        Assert.Equal("103@2x40;103@4x29;103@10x30", Flat(by[103]));
-        Assert.Equal(40 * 50 + 30 * 55 + 29 * 60, lines.Where(l => l.ItemId == 103).Sum(l => l.Cost));
-        // the 100,000 outlier is never bought: 4@100 on world 7 and one 5000 unit on world 12
-        Assert.Equal("102@7x4;102@12x1", Flat(by[102]));
-        Assert.Equal(400 + 5000, lines.Where(l => l.ItemId == 102).Sum(l => l.Cost));
-        // mixed quality: 5 NQ@90 and 5 HQ@120 on world 8, 10 NQ@100 on world 1
-        Assert.Equal("107@1x10;107@8x10", Flat(by[107]));
-        Assert.Equal(10 * 100 + 5 * 90 + 5 * 120, lines.Where(l => l.ItemId == 107).Sum(l => l.Cost));
+        // 2026-11-24 (whole stacks): was "103@2x40;103@4x29;103@10x30" = 40@50 + 30@55 + 29@60 = 5,390 (part of world 4's stack).
+        // Stacks 40@50, 30@60, 30@55, 25@70 (125 for sale, 99 needed): the only stack that can be left out is the 25, so all three
+        // others, 100 units for 5,450.
+        Assert.Equal("103@2x40;103@4x30;103@10x30", Flat(by[103]));
+        Assert.Equal(40 * 50 + 30 * 60 + 30 * 55, lines.Where(l => l.ItemId == 103).Sum(l => l.Cost));
+        // the 100,000 outlier is never bought.
+        // 2026-11-24: was "102@7x4;102@12x1" = 400 + 5,000 (one unit of world 12's 3-stack). Covers of 5: 4@100 + 3@5,000 =
+        // 15,400 (7 units), 4@100 + 2@9,000 = 18,400, 3@5,000 + 2@9,000 = 33,000, 4@100 + 1@100,000 = 100,400.
+        Assert.Equal("102@7x4;102@12x3", Flat(by[102]));
+        Assert.Equal(400 + 3 * 5000, lines.Where(l => l.ItemId == 102).Sum(l => l.Cost));
+        // mixed quality.
+        // 2026-11-24: was "107@1x10;107@8x10" = 10 NQ@100 + 5 NQ@90 + 5 HQ@120 = 2,050 (5 of world 8's HQ 20-stack). Covers of
+        // 20: HQ 20@120 alone 2,400; 5@90 + 20@120 = 2,850; 20@150 = 3,000; 10@100 + 20@120 = 3,400; 10@100 + HQ 10@500 = 6,000.
+        Assert.Equal("107@8x20", Flat(by[107]));
+        Assert.Equal(20 * 120, lines.Where(l => l.ItemId == 107).Sum(l => l.Cost));
         // price-0 listings are not free units: all 48 from world 13
         Assert.Equal("108@13x48", Flat(by[108]));
         Assert.Equal(48 * 40, lines.Single(l => l.ItemId == 108).Cost);
-        // the leaked world 21 and the unknown world 99 never receive a line
-        Assert.Equal("110@3x50;110@12x40", Flat(by[110]));
+        // the leaked world 21 and the unknown world 99 never receive a line.
+        // 2026-11-24: was "110@3x50;110@12x40". 90 needs both 50-stacks: 100 units, 350 + 400.
+        Assert.Equal("110@3x50;110@12x50", Flat(by[110]));
         // the two requirement rows for 112 were merged
         Assert.Equal(2, r.Book.Items.Single(i => i.ItemId == 112).Needed);
-        Assert.Equal("112@6x1;112@19x1", Flat(by[112]));
+        // 2026-11-24: was "112@6x1;112@19x1" = 3,000 + 2,900. World 6's 2-stack alone (6,000) beats both stacks (8,900).
+        Assert.Equal("112@6x2", Flat(by[112]));
+
+        // New 2026-11-24, hand-worked the same way: 101 buys the 1-stack at 400 (not 3@260 = 780 or 5@300 = 1,500); 109 buys
+        // world 5's 70-stack for 1,400, six units of surplus, under 64@22 = 1,408 and 10@18 + 64@22 = 1,588; 104 sells only 60.
+        Assert.Equal("101@16x1", Flat(by[101]));
+        Assert.Equal("109@5x70", Flat(by[109]));
+        Assert.Equal("104@1x20;104@8x20;104@18x20", Flat(by[104]));
+        Assert.Equal("111@1x6;111@2x6", Flat(by[111]));
+        // 400 + 15,400 + 5,450 + 660 + 2,400 + 1,920 + 1,400 + 750 + 11,100 + 6,000
+        Assert.Equal(45_480L, r.Cmp.Cheapest.GrandTotal);
+        Assert.Equal(13, r.Cmp.Cheapest.WorldCount);
     }
 
     [Fact]
@@ -504,7 +555,7 @@ public class RedesignPipelineTests
     {
         var r = await RunAsync(Realistic());
         Assert.Equal([new SkippedItem(106, 33)], r.Book.Skipped);
-        Assert.Equal([new SkippedItem(106, 33)], r.ServicePlan.Skipped);
+        // 2026-11-24: the same check on BuildPlanAsync's plan was removed with that method (partial-stack planner deleted).
         Assert.DoesNotContain(r.Book.Items, i => i.ItemId is 106 or 113);
         Assert.All(r.Client.Calls, c => Assert.DoesNotContain(106u, c.Ids));
         Assert.All(r.Client.Calls, c => Assert.DoesNotContain(113u, c.Ids));
@@ -515,11 +566,25 @@ public class RedesignPipelineTests
     [Fact]
     public async Task Realistic_FewestWorldsActuallySavesWorlds_AndComparisonMatchesSummaries()
     {
-        var r = await RunAsync(Realistic());
+        // 2026-11-24 (whole stacks), fixture changed for this test only: world 14's 12-stack of item 111 is removed.
+        // On the unchanged fixture the greedy plan visits 13 worlds, as many as Cheapest, and costs more, so the safeguard returns
+        // Cheapest and nothing is saved (it picks world 14 for 107 and 111, and 111 then sits alone there while Cheapest splits it
+        // over worlds 1 and 2, which it visits anyway). Without that stack: the greedy picks world 5 (101, 109), 13 (108), 8 (107),
+        // 6 (112), 7 (102: both stacks, 100,400, the outlier included); 103, 104, 110 and 111 are covered as in Cheapest (104
+        // starts from world 8, already chosen); 101 stays on world 5 (3@260 = 780) and 107 on world 8. That is 12 worlds against
+        // Cheapest's 13 (unchanged at 45,480, since 111 is cheaper on worlds 1 and 2), for 130,860: 85,380 extra.
+        var fx = Realistic();
+        fx.Pool[111].RemoveAll(l => l.WorldId == 14);
+        var r = await RunAsync(fx);
+        Assert.Equal((13, 12), (r.Cmp.Cheapest.WorldCount, r.Cmp.FewestWorlds.WorldCount));
+        Assert.Equal((45_480L, 130_860L), (r.Cmp.Cheapest.GrandTotal, r.Cmp.FewestWorlds.GrandTotal));
         Assert.True(r.Cmp.WorldsSaved > 0, $"cheapest {r.Cmp.Cheapest.WorldCount} worlds, fewest {r.Cmp.FewestWorlds.WorldCount}");
         Assert.True(r.Cmp.ExtraGilForFewestWorlds > 0, $"extra {r.Cmp.ExtraGilForFewestWorlds}");
         Assert.Equal(r.Cmp.FewestWorlds.GrandTotal - r.Cmp.Cheapest.GrandTotal, r.Cmp.ExtraGilForFewestWorlds);
         Assert.Equal(r.Cmp.Cheapest.Worlds.Count - r.Cmp.FewestWorlds.Worlds.Count, r.Cmp.WorldsSaved);
+        // New 2026-11-24: on the unchanged fixture both plans are now the same, so this is the realistic book whose
+        // fewest-worlds plan differs; run every cross-module invariant (edits included) over it too.
+        await AssertPipelineAsync(fx);
     }
 
     [Fact]
@@ -530,14 +595,16 @@ public class RedesignPipelineTests
         var state = Fresh(r.Book, r.Cheap);
         var before = state.Summarize();
 
-        // world 4 holds only item 103's 29 units in this plan: zero it and the world drops out of the route
-        Assert.Equal(29, state.GetQuantity(103, 4));
+        // world 4 holds only item 103's stack in this plan: zero it and the world drops out of the route.
+        // 2026-11-24 (whole stacks): was 29 units and 29 * 60 gil; the plan now buys world 4's whole 30-stack (see the hand-worked
+        // answers above). Without it 40 + 30 = 70 of 99 remain, so 29 are missing, the same number as before by coincidence.
+        Assert.Equal(30, state.GetQuantity(103, 4));
         Assert.DoesNotContain(r.Cheap, l => l.WorldId == 4 && l.ItemId != 103);
         state.SetQuantity(103, 4, 0);
         var after = state.Summarize();
         Assert.DoesNotContain(after.Worlds, w => w.WorldId == 4);
         Assert.Equal(before.WorldCount - 1, after.WorldCount);
-        Assert.Equal(before.GrandTotal - 29 * 60, after.GrandTotal);
+        Assert.Equal(before.GrandTotal - 30 * 60, after.GrandTotal);
         Assert.Equal(29, after.Unmet.Single(u => u.ItemId == 103).Missing);
 
         // raising above stock clamps: world 10 sells 30 of 103

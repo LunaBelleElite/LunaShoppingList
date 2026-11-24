@@ -310,4 +310,85 @@ public class OfferBookBuilderTests
         Assert.Throws<ArgumentNullException>(() => OfferBookBuilder.Build([], [], null!, ex));
         Assert.Throws<ArgumentNullException>(() => OfferBookBuilder.Build([], [], Allow(), null!));
     }
+
+    // ---- cross-module: Artisan JSON / Universalis parser / scope resolver -> OfferBookBuilder ----
+    //
+    // 2026-11-24: ported from ShoppingPlannerTests (the partial-stack ShoppingPlanner was removed that day), where these fed the
+    // planner. Same inputs; the assertions are now on the offer book, which is what the plugin builds from them.
+
+    private sealed class LambdaRecipes(Func<uint, RecipeInfo?> f) : IRecipeData
+    {
+        public RecipeInfo? GetRecipe(uint recipeId) => f(recipeId);
+    }
+
+    private static IReadOnlyList<Requirement> Reqs(string artisanJson, int listId, params (uint recipe, (uint item, int amount)[] ing)[] recipes)
+    {
+        var map = recipes.ToDictionary(r => r.recipe, r => new RecipeInfo(r.recipe, r.recipe + 1000, 1, r.ing.Select(i => new Ingredient(i.item, i.amount)).ToList()));
+        var list = ArtisanConfigParser.ParseLists(artisanJson).Single(l => l.Id == listId);
+        return new MaterialsCalculator(new LambdaRecipes(id => map.GetValueOrDefault(id))).Compute(list);
+    }
+
+    private static ItemListings[] Group(params Listing[] ls)
+        => ls.GroupBy(l => l.ItemId).Select(g => new ItemListings(g.Key, g.ToList())).ToArray();
+
+    // was ShoppingPlannerTests.Pipeline_ArtisanListWithZeroRecipes_GivesEmptyPlan
+    [Fact]
+    public void Pipeline_ArtisanListWithZeroRecipes_GivesEmptyBook()
+    {
+        var reqs = Reqs("{\"NewCraftingLists\":[{\"ID\":1,\"Name\":\"Empty\",\"Recipes\":[]}]}", 1);
+        Assert.Empty(reqs);
+        var book = OfferBookBuilder.Build(reqs, [], Allow(10), new ExclusionState());
+        Assert.Empty(book.Items);
+        Assert.Empty(book.Skipped);
+    }
+
+    // was ShoppingPlannerTests.Pipeline_NegativeZeroAndSkippedEntriesInConfig_NeverReachThePlan
+    [Fact]
+    public void Pipeline_NegativeZeroAndSkippedEntriesInConfig_NeverReachTheBook()
+    {
+        const string json = """
+            {"NewCraftingLists":[{"ID":1,"Name":"L","Recipes":[
+              {"ID":1,"Quantity":-5},
+              {"ID":1,"Quantity":0},
+              {"ID":2,"Quantity":3,"ListItemOptions":{"Skipping":true}},
+              {"ID":3,"Quantity":2}]}]}
+            """;
+        var reqs = Reqs(json, 1, (1, [(10, 1)]), (2, [(20, 1)]), (3, [(30, 4)]));
+        Assert.Equal([new Requirement(30, 8)], reqs);
+        var book = OfferBookBuilder.Build(reqs, Group(L(10, 10, "A", 1, 99), L(20, 10, "A", 1, 99), L(30, 10, "A", 2, 99)), Allow(10), new ExclusionState());
+        var item = Assert.Single(book.Items);
+        Assert.Equal((30u, 8), (item.ItemId, item.Needed));
+        Assert.Empty(book.Skipped);
+    }
+
+    // was ShoppingPlannerTests.Pipeline_CrossWorldFromAether_NeverBuysOnMateriaEvenWhenCheaper_CrossDcDoes
+    [Fact]
+    public void Pipeline_CrossWorldFromAether_NeverOffersMateriaEvenWhenCheaper_CrossDcDoes()
+    {
+        // Listings are fetched per data center (the scopes), so a DC scope can return worlds the user cannot reach.
+        WorldInfo W(uint id, string n, string dc, string region) => new(id, n, dc, region, dc, true);
+        WorldInfo[] all = [W(1, "Adamantoise", "Aether", "North America"), W(2, "Behemoth", "Primal", "North America"), W(6, "Ravana", "Materia", "Oceania")];
+        var listings = Group(L(1, 6, "Ravana", 1, 10), L(1, 2, "Behemoth", 90, 10));
+        var reqs = new[] { new Requirement(1, 4) };
+
+        var cw = TravelScopeResolver.Resolve(TravelScopeKind.CrossWorld, all[0], all);
+        var bookCw = OfferBookBuilder.Build(reqs, listings, cw.Worlds.Select(w => w.Id).ToHashSet(), new ExclusionState());
+        Assert.Equal(new uint[] { 2 }, WorldIds(Assert.Single(bookCw.Items)));
+
+        var cd = TravelScopeResolver.Resolve(TravelScopeKind.CrossDataCenter, all[0], all);
+        var bookCd = OfferBookBuilder.Build(reqs, listings, cd.Worlds.Select(w => w.Id).ToHashSet(), new ExclusionState());
+        Assert.Contains(6u, WorldIds(Assert.Single(bookCd.Items)));
+    }
+
+    // was ShoppingPlannerTests.Pipeline_UniversalisListingWithoutAnyWorldId_IsNotBoughtOnWorldZero
+    [Fact]
+    public void Pipeline_UniversalisListingWithoutAnyWorldId_IsNotOfferedOnWorldZero()
+    {
+        // Real parser output: a listing with no worldID anywhere becomes WorldId 0 and is dropped, so the item shows no listings.
+        const string body = "{\"itemID\":1,\"listings\":[{\"pricePerUnit\":1,\"quantity\":9,\"hq\":false}]}";
+        var parsed = UniversalisResponseParser.Parse(body, [1u]);
+        Assert.Equal(0u, Assert.Single(Assert.Single(parsed).Listings).WorldId);
+        var book = OfferBookBuilder.Build([new Requirement(1, 1)], parsed, Allow(10), new ExclusionState());
+        Assert.Empty(Assert.Single(book.Items).Worlds);
+    }
 }

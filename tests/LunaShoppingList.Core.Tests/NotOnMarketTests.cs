@@ -144,17 +144,13 @@ public class NotOnMarketTests
         state.SetQuantity(2, 1, 5);
         var summary = state.Summarize();
         Assert.Equal(new uint[] { 2 }, summary.Unmet.Select(u => u.ItemId).ToArray());
-        Assert.Equal(800, summary.GrandTotal);
+        // 2026-11-24: was 800 (3 + 5 units at 100 gil). The fixture sells one stack of 5, so item 1's request of 3 buys the whole stack: 5 + 5 units.
+        Assert.Equal(1000, summary.GrandTotal);
         Assert.Equal(0, state.Unmet(901));
     }
 
-    [Fact]
-    public async Task BuildPlan_AlsoNeverSendsNonMarketItems()
-    {
-        var c = new FakeClient();
-        await Svc(c, Marketable).BuildPlanAsync([new(1, 1), new(901, 3)], TravelScopeKind.CrossWorld, new ExclusionState(), null, default);
-        Assert.Equal([new uint[] { 1 }], c.Calls);
-    }
+    // 2026-11-24: BuildPlan_AlsoNeverSendsNonMarketItems was deleted with BuildPlanAsync (partial-stack planner removed); the
+    // offer-book path's own check of the same rule is NonMarketItems_AreNeverSentToUniversalis_MarketItemsAre.
 
     [Fact]
     public void IsMarketable_UsesTheCheck_AndDefaultsToTrue()

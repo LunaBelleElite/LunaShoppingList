@@ -130,8 +130,13 @@ The columns:
 - The item list on the left follows the route, first world first. Items start
   collapsed, so open one to see every world selling it. Untick **Show item
   list** to give the route the whole window.
-- Type a quantity next to a world to change what you buy there. The totals
-  follow, and the header says the plan was edited by hand.
+- The market board only sells whole stacks, so every plan buys whole stacks. A
+  world's line reads like `buy 2 stacks (20 + 99), 119 units`. Buying more than
+  you need is sometimes the cheapest plan, and an item then shows `surplus 19`.
+  If the market doesn't have enough, it shows `short by N`.
+- The small **-** and **+** buttons in the **Buy here** box step through the
+  amounts you can really buy. A number you type rounds up to the next one. The
+  totals follow, and the header says the plan was edited by hand.
 - The **Route** panel lists each world and what to buy there. When you shop on
   more than one data center, the worlds sit under a heading for each, with its
   gil subtotal. Click an item name to copy it for the market board search.
@@ -164,7 +169,8 @@ It doesn't check whether you can buy from a vendor. Some need a quest or a rank
 first. A few vendors can't be matched to an NPC, so they don't show.
 
 Its plans come from a fast search. They're good, but nobody has proven them the
-cheapest.
+cheapest. On a very large list the search stops after a fixed amount of work and
+shows the best plans it found by then.
 
 It prices the cheapest listing of either quality and doesn't show which is HQ.
 
@@ -174,9 +180,7 @@ data, and it hasn't been tried on them.
 ## Why the numbers can be a little off
 
 Universalis is built from what other players upload, so a listing can be gone by
-the time you get there. Prices leave out market tax. And it assumes you can buy
-part of a stack, so where the game makes you take the whole stack, you pay more
-than shown.
+the time you get there. Prices leave out market tax.
 
 ## What you need
 

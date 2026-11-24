@@ -72,9 +72,12 @@ public class RouteDataCenterTests
     public void SubtotalsAddUpToGrandTotal()
     {
         var s = RouteSummarizer.Summarize(Book(), All(), Dc);
-        Assert.Equal(new long[] { 10 + 40, 90 + 160, 250 }, s.DataCenters.Select(g => g.Subtotal).ToArray());
+        // 2026-11-24: subtotals were { 10 + 40, 90 + 160, 250 } and the grand total 550 (the requested 1..5 units). Every world sells
+        // one stack of 99, so each line buys 99 units: world prices 10, 20, 30, 40, 50 times 99.
+        // Light = Zodiark + Alpha, Primal = Famfrit + Aaa, unknown = Mystery.
+        Assert.Equal(new long[] { 99 * (10 + 20), 99 * (30 + 40), 99 * 50 }, s.DataCenters.Select(g => g.Subtotal).ToArray());
         Assert.Equal(s.GrandTotal, s.DataCenters.Sum(g => g.Subtotal));
-        Assert.Equal(550, s.GrandTotal);
+        Assert.Equal(99 * 150, s.GrandTotal);
     }
 
     [Fact]
@@ -84,7 +87,7 @@ public class RouteDataCenterTests
         var g = Assert.Single(s.DataCenters);
         Assert.Equal("Light", g.Name);
         Assert.Equal(5, g.Worlds.Count);
-        Assert.Equal(550, g.Subtotal);
+        Assert.Equal(99 * 150, g.Subtotal);   // 2026-11-24: was 550; see SubtotalsAddUpToGrandTotal
     }
 
     [Fact]

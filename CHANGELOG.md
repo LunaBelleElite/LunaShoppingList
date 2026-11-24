@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.16.0.0 - 2026-11-24
+
+- Plans and prices now assume you buy whole stacks, because the market board won't sell part of one. Totals can be higher than before and can include extra units.
+- The Buy here box has small - and + buttons that step through amounts you can really buy. A number you type rounds up to the next one.
+- Results show things like buy 2 stacks (20 + 99), 119 units, with surplus N when you end up with extra and short by N when the market doesn't have enough.
+- Willing to pay extra plans use whole stacks too. On very large lists the search stops after a while and shows the best plans it found.
+
 ## 0.15.0.0 - 2026-11-24
 
 - New Buy only what I lack box next to Find prices. Ticked, it prices only what your bags, saddlebag and retainers don't already cover.

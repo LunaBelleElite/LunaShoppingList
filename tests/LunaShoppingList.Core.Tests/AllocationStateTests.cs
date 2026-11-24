@@ -45,7 +45,8 @@ public class AllocationStateTests
     {
         var a = new AllocationState(Book());
         a.SetQuantity(1, 10, 3);
-        Assert.Equal(3, a.GetQuantity(1, 10));
+        // 2026-11-24: was 3 (divisible units). WA sells whole stacks of 2 and 4, so 3 is not a legal total and snaps up to 4.
+        Assert.Equal(4, a.GetQuantity(1, 10));
         Assert.Equal(0, a.GetQuantity(1, 11));
     }
 
@@ -76,7 +77,8 @@ public class AllocationStateTests
         a.SetQuantity(1, 10, 3);
         a.SetQuantity(2, 11, 1);
         a.SetQuantity(1, 10, 0);
-        Assert.Equal(new[] { new AllocationLine(2, 11, 1) }, a.Lines);
+        // 2026-11-24: was AllocationLine(2, 11, 1). WB sells one stack of 3, so a request for 1 snaps up to 3.
+        Assert.Equal(new[] { new AllocationLine(2, 11, 3) }, a.Lines);
         Assert.DoesNotContain(a.Summarize().Worlds, w => w.WorldId == 10);
     }
 
@@ -98,8 +100,9 @@ public class AllocationStateTests
         var a = new AllocationState(Book());
         a.SetQuantity(1, 10, 2);
         a.SetQuantity(1, 11, 1);
-        Assert.Equal(3, a.Allocated(1));
-        Assert.Equal(2, a.Unmet(1));
+        // 2026-11-24: was Allocated 3 / Unmet 2. Requests of 2 (a legal total) and 1 (snaps up to WB's stack of 3) buy 2 + 3 = 5 units.
+        Assert.Equal(5, a.Allocated(1));
+        Assert.Equal(0, a.Unmet(1));
     }
 
     [Fact]
@@ -108,10 +111,11 @@ public class AllocationStateTests
         var a = new AllocationState(Book());
         a.SetQuantity(1, 11, 2);
         a.SetQuantity(2, 11, 3);
-        Assert.Equal(2, a.Allocated(1));
+        // 2026-11-24: Allocated(1) was 2 and Unmet(1) was 3: a request of 2 on WB snaps up to its one stack of 3.
+        Assert.Equal(3, a.Allocated(1));
         Assert.Equal(3, a.Allocated(2));
         Assert.Equal(0, a.Allocated(3));
-        Assert.Equal(3, a.Unmet(1));
+        Assert.Equal(2, a.Unmet(1));
         Assert.Equal(0, a.Unmet(2));
         Assert.Equal(4, a.Unmet(3));
     }
@@ -140,7 +144,8 @@ public class AllocationStateTests
     {
         var a = new AllocationState(Book());
         a.SetQuantity(1, 10, 5);
-        Assert.Equal(2 * 10 + 3 * 25, a.Cost(1, 10));
+        // 2026-11-24: was 2 * 10 + 3 * 25 = 95 (part of the 25 gil stack). 5 is not a legal total; it snaps up to 6 = both stacks whole.
+        Assert.Equal(2 * 10 + 4 * 25, a.Cost(1, 10));
         a.SetQuantity(1, 10, 2);
         Assert.Equal(20, a.Cost(1, 10));
         Assert.Equal(0, a.Cost(1, 11));
@@ -154,7 +159,8 @@ public class AllocationStateTests
         a.SetQuantity(1, 10, 3);
         a.SetQuantity(2, 11, 2);
         a.Apply(new[] { new AllocationLine(1, 11, 1) });
-        Assert.Equal(new[] { new AllocationLine(1, 11, 1) }, a.Lines);
+        // 2026-11-24: was AllocationLine(1, 11, 1); a request of 1 on WB snaps up to its stack of 3.
+        Assert.Equal(new[] { new AllocationLine(1, 11, 3) }, a.Lines);
         Assert.Equal(0, a.GetQuantity(1, 10));
         Assert.Equal(0, a.GetQuantity(2, 11));
     }
@@ -206,9 +212,10 @@ public class AllocationStateTests
         a.SetQuantity(2, 11, 1);
         a.SetQuantity(1, 11, 1);
         a.SetQuantity(1, 10, 1);
+        // 2026-11-24: quantities were 1, 1, 1; each request of 1 snaps up to the world's smallest legal total (WA 2, WB 3, WB 3).
         Assert.Equal(new[]
         {
-            new AllocationLine(1, 10, 1), new AllocationLine(1, 11, 1), new AllocationLine(2, 11, 1),
+            new AllocationLine(1, 10, 2), new AllocationLine(1, 11, 3), new AllocationLine(2, 11, 3),
         }, a.Lines);
     }
 
@@ -218,9 +225,10 @@ public class AllocationStateTests
         var a = new AllocationState(Book());
         a.SetQuantity(1, 10, 1);
         var before = a.Lines;
-        a.SetQuantity(1, 10, 2);
-        Assert.Equal(1, Assert.Single(before).Quantity);          // earlier snapshot unchanged
-        Assert.Equal(2, Assert.Single(a.Lines).Quantity);
+        a.SetQuantity(1, 10, 3);
+        // 2026-11-24: was 1 then 2 (the second edit, 2, is already a legal total so it would no longer change anything). Now 2 (1 snapped up), then 4 (3 snapped up).
+        Assert.Equal(2, Assert.Single(before).Quantity);          // earlier snapshot unchanged
+        Assert.Equal(4, Assert.Single(a.Lines).Quantity);
     }
 
     [Fact]
@@ -239,11 +247,12 @@ public class AllocationStateTests
         var a = new AllocationState(Book());
         a.SetQuantity(1, 10, 5);
         var s1 = a.Summarize();
-        Assert.Equal(95, s1.GrandTotal);
+        // 2026-11-24: was 95 (5 divisible units); 5 snaps up to 6 whole units = 2 * 10 + 4 * 25.
+        Assert.Equal(120, s1.GrandTotal);
         Assert.Equal(new[] { new ShortfallItem(2, 3), new ShortfallItem(3, 4) }, s1.Unmet);
         a.SetQuantity(2, 11, 3);
         var s2 = a.Summarize();
-        Assert.Equal(95 + 21, s2.GrandTotal);
+        Assert.Equal(120 + 21, s2.GrandTotal);   // 2026-11-24: was 95 + 21
         Assert.Equal(2, s2.WorldCount);
         Assert.Equal(new[] { new ShortfallItem(3, 4) }, s2.Unmet);
     }

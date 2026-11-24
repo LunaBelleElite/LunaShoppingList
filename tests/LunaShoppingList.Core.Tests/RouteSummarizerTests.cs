@@ -39,12 +39,14 @@ public class RouteSummarizerTests
         var book = Book(Item(1, 5, World(10, "A", Step(10, 2, 3), Step(25, 4, 1))));
         var s = RouteSummarizer.Summarize(book, new[] { L(1, 10, 5) });
         var line = Assert.Single(Assert.Single(s.Worlds).Lines);
-        Assert.Equal(2 * 10 + 3 * 25, line.Cost);
+        // 2026-11-24: Cost was 2 * 10 + 3 * 25 = 95, Quantity 5, GrandTotal 95. Five is not a legal total of stacks 2 and 4;
+        // it snaps up to 6, both stacks whole, so Cost is 2 * 10 + 4 * 25 = 120.
+        Assert.Equal(2 * 10 + 4 * 25, line.Cost);
         Assert.Equal(10, line.MinUnitPrice);
         Assert.Equal(25, line.MaxUnitPrice);
         Assert.Equal(T0.AddDays(-3), line.OldestReview);
-        Assert.Equal(5, line.Quantity);
-        Assert.Equal(95, s.GrandTotal);
+        Assert.Equal(6, line.Quantity);
+        Assert.Equal(120, s.GrandTotal);
         Assert.Empty(s.Unmet);
     }
 
@@ -97,7 +99,8 @@ public class RouteSummarizerTests
     {
         var book = Book(Item(1, 3, World(10, "A", Step(10, 5))));
         var s = RouteSummarizer.Summarize(book, new[] { L(1, 10, 3), L(1, 10, -2) });
-        Assert.Equal(3, s.Worlds[0].Lines[0].Quantity);
+        // 2026-11-24: was 3; the world sells one stack of 5, so a request of 3 buys the whole stack.
+        Assert.Equal(5, s.Worlds[0].Lines[0].Quantity);
         Assert.Empty(s.Unmet);
     }
 
@@ -107,7 +110,8 @@ public class RouteSummarizerTests
         var book = Book(Item(1, 3, World(10, "A", Step(10, 5)), World(11, "B", Step(12, 5))));
         var s = RouteSummarizer.Summarize(book, new[] { L(1, 10, 4), L(1, 11, 4) });
         Assert.Empty(s.Unmet);
-        Assert.Equal(4 * 10 + 4 * 12, s.GrandTotal);
+        // 2026-11-24: was 4 * 10 + 4 * 12 = 88; each world sells one stack of 5, so each request of 4 buys 5.
+        Assert.Equal(5 * 10 + 5 * 12, s.GrandTotal);
     }
 
     [Fact]
@@ -132,7 +136,9 @@ public class RouteSummarizerTests
         var w = new[] { World(10, "A", Step(1, 9)), World(11, "B", Step(1, 9)) };
         var book = Book(Item(5, 10, w), Item(3, 10, w), Item(4, 2, w));
         var s = RouteSummarizer.Summarize(book, new[] { L(5, 10, 2), L(5, 11, 3), L(4, 10, 2) });
-        Assert.Equal(new[] { new ShortfallItem(3, 10), new ShortfallItem(5, 5) }, s.Unmet);
+        // 2026-11-24: was { Shortfall(3, 10), Shortfall(5, 5) }. Each world sells one stack of 9, so item 5's requests of 2 and 3
+        // buy 9 + 9 = 18 (need 10) and item 5 is no longer short.
+        Assert.Equal(new[] { new ShortfallItem(3, 10) }, s.Unmet);
     }
 
     [Fact]
@@ -166,9 +172,11 @@ public class RouteSummarizerTests
         var wB = World(11, "B", Step(7, 5));
         var book = Book(Item(1, 4, wA, wB), Item(2, 4, wA, wB));
         var s = RouteSummarizer.Summarize(book, new[] { L(1, 10, 2), L(2, 10, 3), L(1, 11, 2) });
-        Assert.Equal(50, s.Worlds[0].Total);
-        Assert.Equal(14, s.Worlds[1].Total);
-        Assert.Equal(64, s.GrandTotal);
+        // 2026-11-24: totals were 50, 14, 64. Each world sells one stack of 5, so every line buys all 5 units:
+        // world A 2 lines * 50 = 100, world B 5 * 7 = 35.
+        Assert.Equal(100, s.Worlds[0].Total);
+        Assert.Equal(35, s.Worlds[1].Total);
+        Assert.Equal(135, s.GrandTotal);
         Assert.Equal("A", s.Worlds[0].WorldName);
     }
 
@@ -214,10 +222,13 @@ public class RouteSummarizerTests
             new[] { L(1, 11, 2), L(1, 10, 2) },
             new[] { L(1, 10, 4) });
         Assert.Equal(2, cmp.Cheapest.WorldCount);
-        Assert.Equal(28, cmp.Cheapest.GrandTotal);
+        // 2026-11-24: totals were 28 / 40 and ExtraGilForFewestWorlds 12. World A sells one stack of 5, so a request of 2 buys 5 for 50
+        // (cheapest = 2 * 4 + 50 = 58) and the request of 4 also buys 5 for 50. The fixture is arithmetic only, not a real suggestion,
+        // so the difference is now negative.
+        Assert.Equal(58, cmp.Cheapest.GrandTotal);
         Assert.Equal(1, cmp.FewestWorlds.WorldCount);
-        Assert.Equal(40, cmp.FewestWorlds.GrandTotal);
-        Assert.Equal(12, cmp.ExtraGilForFewestWorlds);
+        Assert.Equal(50, cmp.FewestWorlds.GrandTotal);
+        Assert.Equal(-8, cmp.ExtraGilForFewestWorlds);
         Assert.Equal(1, cmp.WorldsSaved);
     }
 

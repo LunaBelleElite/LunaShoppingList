@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
@@ -12,7 +13,10 @@ public sealed class ResultsWindow : Window
     /// <summary>A listing last reviewed longer ago than this is marked stale.</summary>
     internal static readonly TimeSpan StaleAfter = TimeSpan.FromHours(24);
 
-    private const string Footnote = "Prices are from Universalis, exclude market tax, and may be out of date. This plugin never travels on its own. A click on a world name only asks Lifestream to go there.";
+    private const string Footnote = "Prices are from Universalis, exclude market tax, and may be out of date. This plugin never travels on its own. A click on a world name only asks Lifestream to go there. Listings are bought whole, so the plan can buy more than you need.";
+    private const int StackSizesShown = 4;
+    private const string SurplusTip = "Listings are bought whole, so you end up with some extra.";
+    private const string EstimateTip = "This world has too many listings to solve exactly, so the stacks chosen may not be the cheapest.";
     private const int TopWorlds = 8;
     private const string ReplacesTypedText = "Applies the cheapest plan. Quantities you typed are replaced.";
     private const string OptionReplacesTypedText = "Applies this plan. Quantities you typed are replaced.";
@@ -20,7 +24,7 @@ public sealed class ResultsWindow : Window
     private static readonly Vector4 Amber = new(1f, 0.75f, 0.2f, 1f);
 
     /// <summary>The display numbers of one world's offer, computed once per book.</summary>
-    private readonly record struct Row(string Units, string Price, string Cost, bool Partial, bool Stale, int UnitsN, int PriceN, long CostN, DateTimeOffset Reviewed);
+    private readonly record struct Row(string Units, string Price, string Cost, bool Partial, bool Stale, int UnitsN, int PriceN, long CostN, DateTimeOffset Reviewed, int CoverUnits);
 
     /// <summary>
     /// A table's displayed row order for one sort choice: positions into the table's natural rows. The natural rows, the
@@ -44,6 +48,9 @@ public sealed class ResultsWindow : Window
     private readonly Dictionary<uint, bool> openItems = new();
     private readonly HashSet<uint> showAll = new();
     private readonly HashSet<(uint, uint)> pinnedRows = new();
+    // The Buy-here box being typed in (item, world) and the number typed so far; applied once when the box is left.
+    private (uint, uint)? buyEdit;
+    private int buyEditValue;
 
     // Click-to-sort state, per window only (never saved). ImGui keeps each table's chosen column and direction; these remember the
     // order built for it, one entry per item's offers table and one per world's route table. Each table sorts on its own.
@@ -193,20 +200,25 @@ public sealed class ResultsWindow : Window
             {
                 var w = item.Worlds[j];
                 var units = w.UnitsForSale;
-                var lo = w.MinUnitPrice;
-                var hi = w.MaxUnitPriceFor(item.Needed);
-                var cost = w.CostFor(item.Needed);
+                // Cost, unit price and age describe the cheapest whole stacks covering the need (what the Cheapest plan would
+                // really buy here), not the world's single cheapest listing.
+                var cover = w.Cover(item.Needed);
+                var lo = cover.MinUnitPrice;
+                var hi = cover.MaxUnitPrice;
+                var cost = cover.Cost;
+                var reviewed = cover.OldestReview;
                 var partial = units < item.Needed;
                 arr[j] = new Row(
                     units.ToString("N0"),
                     lo == hi || hi == 0 ? lo.ToString("N0") : $"{lo:N0}-{hi:N0}",
                     partial ? $"{cost:N0} (for {units:N0} of {item.Needed:N0})" : cost.ToString("N0"),
                     partial,
-                    now - w.OldestReviewFor(item.Needed) > StaleAfter,
+                    now - reviewed > StaleAfter,
                     units,
                     lo,
                     cost,
-                    w.OldestReviewFor(item.Needed));
+                    reviewed,
+                    cover.Units);
             }
             map[item.ItemId] = arr;
             if (!openItems.ContainsKey(item.ItemId))
@@ -713,8 +725,8 @@ public sealed class ResultsWindow : Window
         var haveText = have is long h ? h.ToString("N0") : "-";
         var plan = unmet > 0
             ? $" - plan buys {allocated:N0}, short by {unmet:N0}"
-            : allocated > item.Needed
-                ? $" - plan buys {allocated:N0}, over by {allocated - item.Needed:N0}"
+            : state.Surplus(item.ItemId) > 0
+                ? $" - plan buys {allocated:N0}, surplus {state.Surplus(item.ItemId):N0}"
                 : $" - plan buys {allocated:N0}";
         // An item that was reduced by what the player holds says so, and leaves out the live "have" figure: that figure counts the
         // same units that were already taken off the need, so "have 40 of 10" would only confuse.
@@ -729,6 +741,18 @@ public sealed class ResultsWindow : Window
         openItems[item.ItemId] = open;
         if (!open)
             return;
+
+        // Short in red, surplus dim: listings are bought whole, so a plan can end up with a few extra.
+        var missing = state.Unmet(item.ItemId);
+        var extra = state.Surplus(item.ItemId);
+        if (missing > 0)
+            ImGui.TextColored(Red, $"short by {missing:N0}");
+        else if (extra > 0)
+        {
+            ImGui.TextDisabled($"surplus {extra:N0}");
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(SurplusTip);
+        }
 
         if (item.Worlds.Count == 0)
         {
@@ -799,6 +823,8 @@ public sealed class ResultsWindow : Window
                     ImGui.TableNextColumn();
                     if (DrawWorldLink(w.WorldName, "go"))
                         lifestreamNote = lifestream.GoTo(w.WorldName);
+                    if (qty > 0)
+                        DrawStackText(state.StackSizes(item.ItemId, w.WorldId), qty);
                     ImGui.TableNextColumn();
                     ImGui.TextUnformatted(r.Units);
                     ImGui.TableNextColumn();
@@ -808,14 +834,55 @@ public sealed class ResultsWindow : Window
                         ImGui.TextColored(Amber, r.Cost);
                     else
                         ImGui.TextUnformatted(r.Cost);
+                    if (r.CoverUnits > item.Needed && ImGui.IsItemHovered())
+                        ImGui.SetTooltip($"Listings are bought whole, so covering your need takes {Plural.Of(r.CoverUnits, "unit")} here.");
                     ImGui.TableNextColumn();
                     if (r.Stale)
                         ImGui.TextColored(Amber, "stale");
                     ImGui.TableNextColumn();
-                    ImGui.SetNextItemWidth(-1);
-                    if (ImGui.InputInt("##buy", ref qty, 1, 10))
+                    // The box only ever shows a legal total. A typed number is applied on Enter or when the box is left (never per
+                    // keystroke, so state never holds an illegal amount) and snaps up through SetQuantity; the +/- buttons step
+                    // through the legal totals. The built-in step buttons are off (step 0) in favour of those.
+                    var style = ImGui.GetStyle();
+                    var buttonW = ImGui.CalcTextSize("+").X + style.FramePadding.X * 2;
+                    ImGui.SetNextItemWidth(Math.Max(ImGui.GetFontSize() * 2f, ImGui.GetContentRegionAvail().X - (buttonW + style.ItemSpacing.X) * 2));
+                    // The box edits a local copy that is kept across frames while it has focus (ImGui only writes the variable on a
+                    // frame where the text changed, so a fresh copy each frame would be lost on the frame the box is left).
+                    var thisBox = (item.ItemId, w.WorldId);
+                    var typed = buyEdit == thisBox ? buyEditValue : qty;
+                    ImGui.InputInt("##buy", ref typed, 0, 0);
+                    var edited = false;
+                    if (ImGui.IsItemDeactivatedAfterEdit())
                     {
-                        state.SetQuantity(item.ItemId, w.WorldId, qty);
+                        // Fires once, on Enter and on click-away. Comparing with the stored quantity stops a repeat apply.
+                        if (typed != qty)
+                        {
+                            state.SetQuantity(item.ItemId, w.WorldId, typed);
+                            edited = true;
+                        }
+                        buyEdit = null;
+                    }
+                    else if (ImGui.IsItemActive())
+                    {
+                        buyEdit = thisBox;
+                        buyEditValue = typed;
+                    }
+                    else if (buyEdit == thisBox)
+                    {
+                        buyEdit = null; // left without an edit
+                    }
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("-##less"))
+                        edited |= StepBuy(item.ItemId, w.WorldId, -1);
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Step down to the next smaller amount that can be bought whole (0 removes it)");
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("+##more"))
+                        edited |= StepBuy(item.ItemId, w.WorldId, 1);
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Step up to the next larger amount that can be bought whole");
+                    if (edited)
+                    {
                         pinnedRows.Add((item.ItemId, w.WorldId));
                         refreshNotice = false;
                         applied = null;
@@ -832,6 +899,48 @@ public sealed class ResultsWindow : Window
         {
             if (tableOpen)
                 ImGui.EndTable();
+        }
+    }
+
+    /// <summary>Steps one item's quantity on one world to the next (or previous) legal total; true when the quantity changed.</summary>
+    private bool StepBuy(uint itemId, uint worldId, int direction)
+    {
+        var before = state.GetQuantity(itemId, worldId);
+        return state.StepQuantity(itemId, worldId, direction) != before;
+    }
+
+    /// <summary>The real purchase for one line, e.g. "buy 2 stacks (20 + 99), 119 units" or "buy 1 stack of 99". Empty when nothing is bought.</summary>
+    internal static string StackText(IReadOnlyList<int> sizes, int quantity)
+    {
+        if (sizes.Count == 0)
+            return string.Empty;
+        if (sizes.Count == 1)
+            return "buy 1 stack of " + sizes[0].ToString("N0", CultureInfo.InvariantCulture);
+        var shown = string.Join(" + ", sizes.Take(StackSizesShown).Select(s => s.ToString("N0", CultureInfo.InvariantCulture)));
+        var more = sizes.Count > StackSizesShown ? $", +{(sizes.Count - StackSizesShown).ToString("N0", CultureInfo.InvariantCulture)} more" : string.Empty;
+        return $"buy {Plural.Of(sizes.Count, "stack")} ({shown}{more}), {Plural.Of(quantity, "unit")}";
+    }
+
+    /// <summary>Draws <see cref="StackText"/> dim; its tooltip lists every stack size.</summary>
+    private static void DrawStackText(IReadOnlyList<int> sizes, int quantity)
+    {
+        var text = StackText(sizes, quantity);
+        if (text.Length == 0)
+            return;
+        ImGui.TextDisabled(text);
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.BeginTooltip();
+            try
+            {
+                ImGui.PushTextWrapPos(ImGui.GetFontSize() * 30f);
+                ImGui.TextUnformatted("Stack sizes: " + string.Join(", ", sizes.Select(s => s.ToString("N0", CultureInfo.InvariantCulture))));
+                ImGui.PopTextWrapPos();
+            }
+            finally
+            {
+                ImGui.EndTooltip();
+            }
         }
     }
 
@@ -964,6 +1073,15 @@ public sealed class ResultsWindow : Window
                         ImGui.SetClipboardText(itemName);
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip("Click to copy the item name");
+                    DrawStackText(l.StackSizes, l.Quantity);
+                    if (l.Approximate)
+                    {
+                        if (l.StackSizes.Count > 0)
+                            ImGui.SameLine();
+                        ImGui.TextDisabled("(estimate)");
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip(EstimateTip);
+                    }
                     ImGui.TableNextColumn();
                     ImGui.TextUnformatted(l.Quantity.ToString("N0"));
                     ImGui.TableNextColumn();

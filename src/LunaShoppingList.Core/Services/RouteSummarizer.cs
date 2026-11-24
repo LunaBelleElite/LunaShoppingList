@@ -4,9 +4,11 @@ namespace LunaShoppingList.Core;
 public static class RouteSummarizer
 {
     /// <summary>
-    /// Prices every allocation line from the offer's price ladder (cheapest units first, quantity clamped to the units for sale),
-    /// groups the lines per world and reports what is still missing. Lines for unknown items or worlds, and zero or negative
-    /// quantities, are ignored; lines for the same item and world are summed first. Ordering as documented on the records.
+    /// Prices every allocation line as whole stacks (<see cref="LinePricer.Price"/>: the summed quantity snaps up to a legal total, capped
+    /// at the world's supply, and costs the exact price of the chosen stacks), groups the lines per world and reports what is still
+    /// missing. Lines for unknown items or worlds, and zero or negative quantities, are ignored; lines for the same item and world are
+    /// summed first. <see cref="RouteLine.Quantity"/> is the units actually bought and can exceed the item's need (surplus).
+    /// Ordering as documented on the records.
     /// </summary>
     public static RouteSummary Summarize(OfferBook book, IReadOnlyList<AllocationLine> lines, Func<uint, string?>? dataCenterOf = null)
     {
@@ -26,23 +28,35 @@ public static class RouteSummarizer
             summed[key] = summed.GetValueOrDefault(key) + line.Quantity;
         }
 
+        // Price every (item, world) as whole stacks first, so each line can also carry its item's totals over all worlds.
         var allocated = new Dictionary<uint, long>();
-        var perWorld = new Dictionary<uint, (string Name, List<RouteLine> Lines)>();
+        var priced = new List<(uint ItemId, uint WorldId, string WorldName, LinePrice Price)>();
         foreach (var ((itemId, worldId), requested) in summed)
         {
             var offer = FindWorld(items[itemId], worldId)!;
-            var quantity = (int)Math.Min(requested, offer.UnitsForSale);
-            if (quantity <= 0)
+            var price = LinePricer.Price(offer, requested);
+            if (price is null)
                 continue;
 
-            allocated[itemId] = allocated.GetValueOrDefault(itemId) + quantity;
+            allocated[itemId] = allocated.GetValueOrDefault(itemId) + price.Quantity;
+            priced.Add((itemId, worldId, offer.WorldName, price));
+        }
+
+        var perWorld = new Dictionary<uint, (string Name, List<RouteLine> Lines)>();
+        foreach (var (itemId, worldId, worldName, price) in priced)
+        {
             if (!perWorld.TryGetValue(worldId, out var world))
             {
-                world = (offer.WorldName, new List<RouteLine>());
+                world = (worldName, new List<RouteLine>());
                 perWorld[worldId] = world;
             }
-            world.Lines.Add(new RouteLine(itemId, quantity, offer.CostFor(quantity),
-                offer.MinUnitPrice, offer.MaxUnitPriceFor(quantity), offer.OldestReviewFor(quantity)));
+            world.Lines.Add(new RouteLine(itemId, price.Quantity, price.Cost, price.MinUnitPrice, price.MaxUnitPrice, price.OldestReview)
+            {
+                StackSizes = price.StackSizes,
+                Approximate = price.Approximate,
+                ItemNeeded = items[itemId].Needed,
+                ItemBought = (int)Math.Min(allocated[itemId], int.MaxValue),
+            });
         }
 
         var worlds = perWorld
@@ -58,9 +72,11 @@ public static class RouteSummarizer
             .ToList();
 
         var unmet = new List<ShortfallItem>();
+        var coverage = new List<ItemCoverage>();
         foreach (var item in items.Values.OrderBy(i => i.ItemId))
         {
             var have = allocated.GetValueOrDefault(item.ItemId);
+            coverage.Add(new ItemCoverage(item.ItemId, item.Needed, (int)Math.Min(have, int.MaxValue)));
             if (have < item.Needed)
                 unmet.Add(new ShortfallItem(item.ItemId, (int)(item.Needed - have)));
         }
@@ -72,7 +88,7 @@ public static class RouteSummarizer
                 .Select(g => new DataCenterRoute(g.Key, g.ToList(), g.Sum(w => w.Total)))
                 .ToList();
 
-        return new RouteSummary(worlds, worlds.Sum(w => w.Total), unmet, groups);
+        return new RouteSummary(worlds, worlds.Sum(w => w.Total), unmet, groups) { Items = coverage };
     }
 
     /// <summary>Summarizes the two plans and pairs them so the UI can show what the fewest-worlds plan costs extra and saves.</summary>

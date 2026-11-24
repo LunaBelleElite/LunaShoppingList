@@ -68,85 +68,37 @@ public class ShoppingListServiceTests
     private static ShoppingListService Svc(FakeClient c, WorldInfo? cur = null)
         => new(new FakeWorlds(cur ?? A1), c);
 
-    private static Task<ShoppingPlan> Build(ShoppingListService s, Requirement[] r, TravelScopeKind k = TravelScopeKind.CrossWorld,
+    // ---- BuildOfferBookAsync ----
+    //
+    // 2026-11-24: BuildPlanAsync (the partial-stack ShoppingPlanner path) was removed. Its tests that had an OfferBook_ twin below
+    // were deleted; those that pinned the shared fetch with no twin were ported here with the same fixtures, asserting on the offer
+    // book instead of the plan (each says which test it came from).
+
+    private static Task<OfferBook> Book(ShoppingListService s, Requirement[] r, TravelScopeKind k = TravelScopeKind.CrossWorld,
         ExclusionState? ex = null, IProgress<string>? p = null, CancellationToken ct = default)
-        => s.BuildPlanAsync(r, k, ex ?? new ExclusionState(), p, ct);
+        => s.BuildOfferBookAsync(r, k, ex ?? new ExclusionState(), p, ct);
 
-    [Fact]
-    public async Task CrossWorld_CallsOncePerDataCenterWithNonExcludedIdsInOrder()
+    // 2026-11-24: was OfferBook_MakesTheSameCallsAsBuildPlan, which compared the calls with BuildPlanAsync's. The literal calls now
+    // come from the plan-side tests it replaces: CrossWorld_CallsOncePerDataCenterWithNonExcludedIdsInOrder and
+    // Scopes_AreUniversalisDataCentersContainingAllowedWorlds_SortedByName (Uni1, Uni2), CrossDataCenter_CallsOncePerDistinctDataCenter
+    // (Uni1, Uni2, Uni3) and DataCentersAreFetchedOncePerBuild (one data-center fetch).
+    [Theory]
+    [InlineData(TravelScopeKind.CrossWorld, new[] { "Uni1", "Uni2" })]
+    [InlineData(TravelScopeKind.CrossDataCenter, new[] { "Uni1", "Uni2", "Uni3" })]
+    public async Task OfferBook_CallsOncePerUniversalisDataCenterInNameOrder_WithNonExcludedIdsInOrder(TravelScopeKind kind, string[] scopes)
     {
-        var c = new FakeClient();
         var ex = new ExclusionState();
         ex.SetExcluded(2, true);
-        await Build(Svc(c), [new(1, 1), new(2, 1), new(3, 1)], ex: ex);
-        Assert.Equal(2, c.Calls.Count);
-        Assert.Equal("Uni1", c.Calls[0].Scope);
-        Assert.Equal("Uni2", c.Calls[1].Scope);
-        Assert.Equal(new uint[] { 1, 3 }, c.Calls[0].Ids);
-        Assert.Equal(new uint[] { 1, 3 }, c.Calls[1].Ids);
-    }
-
-    [Fact]
-    public async Task CrossDataCenter_CallsOncePerDistinctDataCenter()
-    {
         var c = new FakeClient();
-        await Build(Svc(c), [new(1, 1)], TravelScopeKind.CrossDataCenter);
-        Assert.Equal(new[] { "Uni1", "Uni2", "Uni3" }, c.Calls.Select(x => x.Scope).ToArray());
+        await Book(Svc(c), [new(3, 1), new(1, 1), new(2, 1)], kind, ex);
+        Assert.Equal(scopes, c.Calls.Select(x => x.Scope).ToArray());
+        Assert.All(c.Calls, x => Assert.Equal(new uint[] { 1, 3 }, x.Ids));
+        Assert.Equal(1, c.DcCalls);
     }
 
+    // 2026-11-24: ported from ItemOnlyInLaterScope_IsStillMerged.
     [Fact]
-    public async Task ExcludedItemsNeverReachClientAndAreSkipped()
-    {
-        var c = new FakeClient();
-        var ex = new ExclusionState();
-        ex.SetExcluded(2, true);
-        var plan = await Build(Svc(c), [new(1, 1), new(2, 7)], ex: ex);
-        Assert.NotEmpty(c.Calls);
-        Assert.All(c.Calls, x => Assert.DoesNotContain(2u, x.Ids));
-        Assert.Equal([new SkippedItem(2, 7)], plan.Skipped);
-    }
-
-    [Fact]
-    public async Task AllExcluded_MakesZeroClientCalls_AndStillSkips()
-    {
-        var c = new FakeClient();
-        var ex = new ExclusionState();
-        ex.ExcludeAll([1u, 2u], true);
-        var plan = await Build(Svc(c), [new(1, 3), new(2, 4)], ex: ex);
-        Assert.Empty(c.Calls);
-        Assert.Equal(0, c.DcCalls);
-        Assert.Equal([new SkippedItem(1, 3), new SkippedItem(2, 4)], plan.Skipped);
-        Assert.Empty(plan.Worlds);
-    }
-
-    [Fact]
-    public async Task OnlyNonPositiveQuantities_MakesZeroClientCalls()
-    {
-        var c = new FakeClient();
-        await Build(Svc(c), [new(1, 0), new(2, -3)]);
-        Assert.Empty(c.Calls);
-    }
-
-    [Fact]
-    public async Task ListingsMergedAcrossScopes_AndBoughtCheapestAcross()
-    {
-        var c = new FakeClient
-        {
-            Respond = (scope, ids) => scope == "Uni1"
-                ? [new ItemListings(1, [L(1, A1, 100, 2)])]
-                : [new ItemListings(1, [L(1, B1, 50, 2)])],
-        };
-        var plan = await Build(Svc(c), [new(1, 3)]);
-        Assert.Equal(2, plan.Worlds.Count);
-        var b = plan.Worlds.Single(w => w.WorldId == 3);
-        var a = plan.Worlds.Single(w => w.WorldId == 1);
-        Assert.Equal((2, 50), (b.Purchases[0].Quantity, b.Purchases[0].PricePerUnit));
-        Assert.Equal((1, 100), (a.Purchases[0].Quantity, a.Purchases[0].PricePerUnit));
-        Assert.Empty(plan.Shortfalls);
-    }
-
-    [Fact]
-    public async Task ItemOnlyInLaterScope_IsStillMerged()
+    public async Task OfferBook_ItemOnlyInLaterScope_IsStillMerged()
     {
         var c = new FakeClient
         {
@@ -154,107 +106,38 @@ public class ShoppingListServiceTests
                 ? [new ItemListings(1, [L(1, A1, 10)])]
                 : [new ItemListings(2, [L(2, B1, 20)])],
         };
-        var plan = await Build(Svc(c), [new(1, 1), new(2, 1)]);
-        Assert.Equal(2, plan.Worlds.Count);
-        Assert.Empty(plan.Shortfalls);
+        var book = await Book(Svc(c), [new(1, 1), new(2, 1)]);
+        Assert.Equal(new uint[] { 1, 2 }, book.Items.Select(i => i.ItemId).ToArray());
+        Assert.Equal(1u, Assert.Single(book.Items[0].Worlds).WorldId);
+        Assert.Equal(3u, Assert.Single(book.Items[1].Worlds).WorldId);
     }
 
+    // 2026-11-24: ported from ClientOperationCanceled_PropagatesUnchanged.
     [Fact]
-    public async Task ListingsOutsideAllowedWorlds_AreIgnored()
-    {
-        var c = new FakeClient
-        {
-            Respond = (_, _) => [new ItemListings(1, [L(1, C1, 1), L(1, A2, 500)])],
-        };
-        var plan = await Build(Svc(c), [new(1, 1)]);
-        var g = Assert.Single(plan.Worlds);
-        Assert.Equal(2u, g.WorldId);
-        Assert.Equal(500, g.Purchases[0].PricePerUnit);
-    }
-
-    [Fact]
-    public async Task CurrentWorldUnknown_Throws_WithoutCallingClient()
-    {
-        var c = new FakeClient();
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            new ShoppingListService(new FakeWorlds(null), c).BuildPlanAsync([new(1, 1)], TravelScopeKind.CrossWorld, new ExclusionState(), null, default));
-        Assert.Contains("current world unknown", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Empty(c.Calls);
-    }
-
-    [Fact]
-    public async Task Cancellation_Propagates_AndStopsBetweenScopes()
-    {
-        var c = new FakeClient();
-        using var cts = new CancellationTokenSource();
-        c.Respond = (_, ids) => { cts.Cancel(); return ids.Select(i => new ItemListings(i, [])).ToList(); };
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Build(Svc(c), [new(1, 1)], ct: cts.Token));
-        Assert.Single(c.Calls);
-    }
-
-    [Fact]
-    public async Task ClientException_PropagatesUnchanged()
-    {
-        var boom = new HttpRequestException("boom");
-        var c = new FakeClient { Throw = boom };
-        var ex = await Assert.ThrowsAsync<HttpRequestException>(() => Build(Svc(c), [new(1, 1)]));
-        Assert.Same(boom, ex);
-    }
-
-    [Fact]
-    public async Task ClientOperationCanceled_PropagatesUnchanged()
+    public async Task OfferBook_ClientOperationCanceled_PropagatesUnchanged()
     {
         var oce = new OperationCanceledException("x");
         var c = new FakeClient { Throw = oce };
-        var ex = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Build(Svc(c), [new(1, 1)]));
+        var ex = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Book(Svc(c), [new(1, 1)]));
         Assert.Same(oce, ex);
     }
 
+    // 2026-11-24: ported from DuplicateRequirements_AreMerged (it asserted 5 units bought; the book's Needed is the same sum).
     [Fact]
-    public async Task Progress_ReportsOneMessagePerScope()
-    {
-        var c = new FakeClient();
-        var p = new ListProgress();
-        await Build(Svc(c), [new(1, 1)], p: p);
-        Assert.Equal(["Fetching prices from Uni1 (1/2)", "Fetching prices from Uni2 (2/2)"], p.Messages);
-    }
-
-    [Fact]
-    public async Task DuplicateRequirements_AreMerged()
+    public async Task OfferBook_DuplicateRequirements_AreMerged()
     {
         var c = new FakeClient
         {
             Respond = (_, _) => [new ItemListings(1, [L(1, A1, 10, 100)])],
         };
-        var plan = await Build(Svc(c), [new(1, 2), new(1, 3)]);
+        var book = await Book(Svc(c), [new(1, 2), new(1, 3)]);
         Assert.Single(c.Calls[0].Ids);
-        Assert.Equal(5, plan.Worlds.Single().Purchases.Sum(p => p.Quantity));
+        Assert.Equal(5, Assert.Single(book.Items).Needed);
     }
 
+    // 2026-11-24: ported from DataCenterLargerThanReachableSet_IsStillQueriedButOnlyAllowedWorldsAreBoughtFrom.
     [Fact]
-    public async Task Scopes_AreUniversalisDataCentersContainingAllowedWorlds_SortedByName()
-    {
-        var c = new FakeClient();
-        await Build(Svc(c), [new(1, 1)]);
-        Assert.Equal(["Uni1", "Uni2"], c.Calls.Select(x => x.Scope).ToArray());
-    }
-
-    [Fact]
-    public async Task WorldUnknownToUniversalis_IsNeverQueriedAndItsListingsAreIgnored()
-    {
-        var c = new FakeClient
-        {
-            DataCenters = [new("Uni1", "R1", [1, 2])],
-            Respond = (_, _) => [new ItemListings(1, [L(1, Cloud, 1), L(1, A1, 70)])],
-        };
-        var plan = await Build(Svc(c), [new(1, 1)]);
-        Assert.Equal(["Uni1"], c.Calls.Select(x => x.Scope).ToArray());
-        var g = Assert.Single(plan.Worlds);
-        Assert.Equal(1u, g.WorldId);
-    }
-
-    [Fact]
-    public async Task DataCenterLargerThanReachableSet_IsStillQueriedButOnlyAllowedWorldsAreBoughtFrom()
+    public async Task OfferBook_DataCenterLargerThanReachableSet_IsStillQueriedButOnlyAllowedWorldsAreOffered()
     {
         // "Big" also holds world 4 (game data center Ccc, region R2), which CrossWorld from world 1 cannot reach.
         var c = new FakeClient
@@ -262,101 +145,18 @@ public class ShoppingListServiceTests
             DataCenters = [new("Big", "R1", [3, 4, 5, 99])],
             Respond = (_, _) => [new ItemListings(1, [L(1, C1, 1), L(1, B1, 90)])],
         };
-        var plan = await Build(Svc(c), [new(1, 1)]);
+        var book = await Book(Svc(c), [new(1, 1)]);
         Assert.Equal(["Big"], c.Calls.Select(x => x.Scope).ToArray());
-        var g = Assert.Single(plan.Worlds);
-        Assert.Equal(3u, g.WorldId);
+        Assert.Equal(3u, Assert.Single(Assert.Single(book.Items).Worlds).WorldId);
     }
 
+    // 2026-11-24: ported from NoDataCentersAtAll_Throws.
     [Fact]
-    public async Task DataCentersAreFetchedOncePerBuild()
-    {
-        var c = new FakeClient();
-        await Build(Svc(c), [new(1, 1)]);
-        Assert.Equal(1, c.DcCalls);
-        Assert.Equal(2, c.Calls.Count);
-    }
-
-    [Fact]
-    public async Task NothingToLookUp_DoesNotFetchDataCenters()
-    {
-        var c = new FakeClient();
-        await Build(Svc(c), [new(1, 0)]);
-        Assert.Equal(0, c.DcCalls);
-        Assert.Empty(c.Calls);
-    }
-
-    [Fact]
-    public async Task EmptyIntersection_Throws_AndMakesNoListingsRequest()
-    {
-        var c = new FakeClient { DataCenters = [new("Other", "R9", [200, 201])] };
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => Build(Svc(c), [new(1, 1)]));
-        Assert.Equal("Universalis does not list any world in the selected scope.", ex.Message);
-        Assert.Empty(c.Calls);
-    }
-
-    [Fact]
-    public async Task NoDataCentersAtAll_Throws()
+    public async Task OfferBook_NoDataCentersAtAll_Throws()
     {
         var c = new FakeClient { DataCenters = [] };
-        await Assert.ThrowsAsync<InvalidOperationException>(() => Build(Svc(c), [new(1, 1)]));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Book(Svc(c), [new(1, 1)]));
         Assert.Empty(c.Calls);
-    }
-
-    [Fact]
-    public async Task DataCenterFetchFailure_PropagatesUnchanged_AndNoListingsRequestIsMade()
-    {
-        var boom = new HttpRequestException("dc boom");
-        var c = new FakeClient { DcThrow = boom };
-        var ex = await Assert.ThrowsAsync<HttpRequestException>(() => Build(Svc(c), [new(1, 1)]));
-        Assert.Same(boom, ex);
-        Assert.Empty(c.Calls);
-    }
-
-    [Fact]
-    public async Task PreCancelledToken_ThrowsAndMakesNoListingsRequest()
-    {
-        var c = new FakeClient();
-        using var cts = new CancellationTokenSource();
-        cts.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Build(Svc(c), [new(1, 1)], ct: cts.Token));
-        Assert.Empty(c.Calls);
-    }
-
-    [Fact]
-    public async Task NullArguments_Throw()
-    {
-        var s = Svc(new FakeClient());
-        await Assert.ThrowsAsync<ArgumentNullException>(() => s.BuildPlanAsync(null!, TravelScopeKind.CrossWorld, new ExclusionState(), null, default));
-        await Assert.ThrowsAsync<ArgumentNullException>(() => s.BuildPlanAsync([new(1, 1)], TravelScopeKind.CrossWorld, null!, null, default));
-    }
-
-    // ---- BuildOfferBookAsync ----
-
-    private static Task<OfferBook> Book(ShoppingListService s, Requirement[] r, TravelScopeKind k = TravelScopeKind.CrossWorld,
-        ExclusionState? ex = null, IProgress<string>? p = null, CancellationToken ct = default)
-        => s.BuildOfferBookAsync(r, k, ex ?? new ExclusionState(), p, ct);
-
-    [Theory]
-    [InlineData(TravelScopeKind.CrossWorld)]
-    [InlineData(TravelScopeKind.CrossDataCenter)]
-    public async Task OfferBook_MakesTheSameCallsAsBuildPlan(TravelScopeKind kind)
-    {
-        var ex = new ExclusionState();
-        ex.SetExcluded(2, true);
-        Requirement[] reqs = [new(3, 1), new(1, 1), new(2, 1)];
-        var planClient = new FakeClient();
-        var bookClient = new FakeClient();
-        await Build(Svc(planClient), reqs, kind, ex);
-        await Book(Svc(bookClient), reqs, kind, ex);
-        Assert.Equal(planClient.Calls.Count, bookClient.Calls.Count);
-        for (var i = 0; i < planClient.Calls.Count; i++)
-        {
-            Assert.Equal(planClient.Calls[i].Scope, bookClient.Calls[i].Scope);
-            Assert.Equal(planClient.Calls[i].Ids, bookClient.Calls[i].Ids);
-        }
-        Assert.Equal(planClient.DcCalls, bookClient.DcCalls);
-        Assert.Equal(new uint[] { 1, 3 }, bookClient.Calls[0].Ids);
     }
 
     [Fact]
@@ -508,6 +308,8 @@ public class ShoppingListServiceTests
         new("Uni1", "R1", [1, 2]),
     ];
 
+    // 2026-11-24: the four tests below asserted on BuildPlanAsync's plan (removed); same fixtures, now asserted on the offer book.
+
     [Fact]
     public async Task WorldInTwoDataCenters_IsCountedOnce()
     {
@@ -516,10 +318,10 @@ public class ShoppingListServiceTests
             DataCenters = OverlappingDcs,
             Respond = (_, _) => [new ItemListings(1, [L(1, A2, 10, 2)])],
         };
-        var plan = await Build(Svc(c), [new(1, 4)]);
-        var g = Assert.Single(plan.Worlds);
-        Assert.Equal(2u, g.WorldId);
-        Assert.Equal(2, g.Purchases.Sum(p => p.Quantity));
+        var book = await Book(Svc(c), [new(1, 4)]);
+        var w = Assert.Single(Assert.Single(book.Items).Worlds);
+        Assert.Equal(2u, w.WorldId);
+        Assert.Equal(2, w.UnitsForSale);
         Assert.Equal(["Uni1", "Uni2"], c.Calls.Select(x => x.Scope).ToArray());
     }
 
@@ -533,10 +335,9 @@ public class ShoppingListServiceTests
                 ? [new ItemListings(1, [L(1, A2, 10, 2)])]
                 : [new ItemListings(1, [L(1, A2, 5, 3)])],
         };
-        var plan = await Build(Svc(c), [new(1, 4)]);
-        var g = Assert.Single(plan.Worlds);
-        var p = Assert.Single(g.Purchases);
-        Assert.Equal((2, 10), (p.Quantity, p.PricePerUnit));
+        var book = await Book(Svc(c), [new(1, 4)]);
+        var step = Assert.Single(Assert.Single(Assert.Single(book.Items).Worlds).Steps);
+        Assert.Equal((2, 10), (step.Quantity, step.UnitPrice));
     }
 
     [Fact]
@@ -548,12 +349,16 @@ public class ShoppingListServiceTests
                 ? [new ItemListings(1, [L(1, A1, 20, 1), L(1, B1, 1, 5)])]
                 : [new ItemListings(1, [L(1, B1, 30, 1)])],
         };
-        var plan = await Build(Svc(c), [new(1, 6)]);
-        var a = plan.Worlds.Single(w => w.WorldId == 1);
-        var b = plan.Worlds.Single(w => w.WorldId == 3);
-        Assert.Equal(1, a.Purchases.Sum(p => p.Quantity));
-        Assert.Equal(1, b.Purchases.Sum(p => p.Quantity));
-        Assert.Equal(30, b.Purchases[0].PricePerUnit);
+        var book = await Book(Svc(c), [new(1, 6)]);
+        var item = Assert.Single(book.Items);
+        Assert.Equal((1, 20), Single(item, 1));
+        Assert.Equal((1, 30), Single(item, 3));
+
+        static (int Quantity, int Price) Single(ItemOffers item, uint world)
+        {
+            var step = Assert.Single(item.Worlds.Single(w => w.WorldId == world).Steps);
+            return (step.Quantity, step.UnitPrice);
+        }
     }
 
     [Fact]
@@ -565,9 +370,9 @@ public class ShoppingListServiceTests
                 ? [new ItemListings(1, [L(1, A1, 10, 1), L(1, A1, 10, 1)])]
                 : [new ItemListings(1, [])],
         };
-        var plan = await Build(Svc(c), [new(1, 2)]);
-        var g = Assert.Single(plan.Worlds);
-        Assert.Equal(2, g.Purchases.Sum(p => p.Quantity));
-        Assert.Empty(plan.Shortfalls);
+        var book = await Book(Svc(c), [new(1, 2)]);
+        var w = Assert.Single(Assert.Single(book.Items).Worlds);
+        Assert.Equal(2, w.Steps.Count);
+        Assert.Equal(2, w.UnitsForSale);
     }
 }

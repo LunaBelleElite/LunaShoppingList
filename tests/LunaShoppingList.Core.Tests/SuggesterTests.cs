@@ -2,6 +2,8 @@ using LunaShoppingList.Core;
 
 namespace LunaShoppingList.Core.Tests;
 
+// 2026-11-24 (release 0.16.0.0, whole stacks): a market listing can only be bought as a whole stack. Every expectation below that
+// changed records its before-value in a comment beside it. Quantities are now units actually bought, which can exceed Needed.
 public class SuggesterTests
 {
     private static readonly DateTimeOffset T0 = new(2026, 11, 1, 0, 0, 0, TimeSpan.Zero);
@@ -23,13 +25,17 @@ public class SuggesterTests
     private static string Render(IEnumerable<AllocationLine> lines)
         => string.Join(";", lines.Select(l => $"{l.ItemId}@{l.WorldId}x{l.Quantity}"));
 
+    /// <summary>Whole-stack cost of the lines: each line's quantity must be a legal total on its world.</summary>
     private static long Cost(OfferBook book, IEnumerable<AllocationLine> lines)
         => lines.Sum(l => book.Items.Single(i => i.ItemId == l.ItemId)
-            .Worlds.Single(w => w.WorldId == l.WorldId).CostFor(l.Quantity));
+            .Worlds.Single(w => w.WorldId == l.WorldId).ExactCost(l.Quantity)
+            ?? throw new InvalidOperationException($"{l.ItemId}@{l.WorldId}x{l.Quantity} is not a legal total"));
 
     private static int WorldsVisited(IEnumerable<AllocationLine> lines) => lines.Select(l => l.WorldId).Distinct().Count();
 
-    private static int Supplied(IEnumerable<AllocationLine> lines) => lines.Sum(l => l.Quantity);
+    /// <summary>Units of each item covered, capped at what the item needs.</summary>
+    private static long Covered(OfferBook book, IEnumerable<AllocationLine> lines)
+        => book.Items.Sum(i => Math.Min(i.Needed, lines.Where(l => l.ItemId == i.ItemId).Sum(l => (long)l.Quantity)));
 
     // ---- both modes ----
 
@@ -46,12 +52,14 @@ public class SuggesterTests
     {
         Assert.Throws<ArgumentNullException>(() => Suggester.Suggest(null!, SuggestionMode.Cheapest));
         Assert.Throws<ArgumentNullException>(() => Suggester.Suggest(null!, SuggestionMode.FewestWorlds));
+        Assert.Throws<ArgumentNullException>(() => Suggester.SuggestDetailed(null!, SuggestionMode.Cheapest));
     }
 
     [Fact]
     public void UnknownMode_Throws()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => Suggester.Suggest(Book(), (SuggestionMode)99));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Suggester.SuggestDetailed(Book(), (SuggestionMode)99));
     }
 
     [Theory]
@@ -61,7 +69,8 @@ public class SuggesterTests
     {
         var a = W(1, "Alpha", (10, 5));
         var book = Book(I(20, 3, a), I(10, 2, a));
-        Assert.Equal("10@1x2;20@1x3", Render(Suggester.Suggest(book, mode)));
+        // 2026-11-24 superseded: was "10@1x2;20@1x3" (partial stacks). The only stack is 5 units, bought whole.
+        Assert.Equal("10@1x5;20@1x5", Render(Suggester.Suggest(book, mode)));
     }
 
     [Theory]
@@ -71,7 +80,8 @@ public class SuggesterTests
     {
         var a = W(1, "Alpha", (10, 5));
         var book = Book(I(10, 2), I(20, 3, a));
-        Assert.Equal("20@1x3", Render(Suggester.Suggest(book, mode)));
+        // 2026-11-24 superseded: was "20@1x3".
+        Assert.Equal("20@1x5", Render(Suggester.Suggest(book, mode)));
     }
 
     [Theory]
@@ -85,15 +95,17 @@ public class SuggesterTests
         Assert.Equal("10@1x2;10@2x2", Render(Suggester.Suggest(book, mode)));
     }
 
+    // 2026-11-24 renamed from QuantityClamping_NeverAboveNeededOrStock (expected "10@1x7"): the name became false, a 100-unit stack
+    // is now bought whole for a need of 7. Still never above the stock.
     [Theory]
     [InlineData(SuggestionMode.Cheapest)]
     [InlineData(SuggestionMode.FewestWorlds)]
-    public void QuantityClamping_NeverAboveNeededOrStock(SuggestionMode mode)
+    public void WholeStackOnly_BuysTheWholeStackAboveNeeded_NeverAboveStock(SuggestionMode mode)
     {
         var a = W(1, "Alpha", (10, 100));
         var book = Book(I(10, 7, a));
         var lines = Suggester.Suggest(book, mode);
-        Assert.Equal("10@1x7", Render(lines));
+        Assert.Equal("10@1x100", Render(lines));
         Assert.All(lines, l => Assert.True(l.Quantity > 0));
     }
 
@@ -106,7 +118,8 @@ public class SuggesterTests
         var b = W(2, "Beta", (12, 4));
         var c = W(3, "Gamma", (14, 4));
         var book = Book(I(10, 9, a, b, c));
-        Assert.Equal("10@1x4;10@2x4;10@3x1", Render(Suggester.Suggest(book, mode)));
+        // 2026-11-24 superseded: was "10@1x4;10@2x4;10@3x1". Any two stacks make 8 < 9, so all three are bought whole.
+        Assert.Equal("10@1x4;10@2x4;10@3x4", Render(Suggester.Suggest(book, mode)));
     }
 
     [Theory]
@@ -116,68 +129,108 @@ public class SuggesterTests
     {
         var a = W(1, "Alpha", (10, 5));
         var book = new OfferBook(new List<ItemOffers> { new(10, 0, new List<WorldOffer> { a }), I(20, 1, a) }, new List<SkippedItem>());
-        Assert.Equal("20@1x1", Render(Suggester.Suggest(book, mode)));
+        // 2026-11-24 superseded: was "20@1x1".
+        Assert.Equal("20@1x5", Render(Suggester.Suggest(book, mode)));
     }
 
     // ---- Cheapest ----
 
+    // 2026-11-24 superseded: Cheapest_MergesLaddersAcrossWorlds expected "10@1x1;10@2x3" (cheapest single units across worlds).
+    // With whole stacks the same book buys Beta's 5-stack alone (150 gil, 1 surplus): every cover using Alpha's 1 @ 10 also needs a
+    // 5-stack. Renamed, since nothing is merged unit by unit any more.
     [Fact]
-    public void Cheapest_MergesLaddersAcrossWorlds()
+    public void Cheapest_WholeStackCoverCanBeOneWorldWithSurplus()
     {
         var a = W(1, "Alpha", (10, 1), (100, 5));
         var b = W(2, "Beta", (20, 1), (30, 5));
         var book = Book(I(10, 4, a, b));
-        // cheapest four units: 10 (Alpha), 20, 30, 30 (Beta)
-        Assert.Equal("10@1x1;10@2x3", Render(Suggester.Suggest(book, SuggestionMode.Cheapest)));
+        Assert.Equal("10@2x5", Render(Suggester.Suggest(book, SuggestionMode.Cheapest)));
     }
 
     [Fact]
-    public void Cheapest_TieOnPrice_NewerReviewFirst_ThenLowerWorldId()
+    public void Cheapest_CombinesStacksAcrossWorlds()
     {
-        var a = WO(2, "Beta", (10, 1, 3));
-        var b = WO(5, "Echo", (10, 1, 1));   // newer review, higher id: taken first
-        var c = WO(1, "Alpha", (10, 1, 3));  // same review as Beta, lower id: wins the second unit
-        var book = Book(I(10, 2, a, b, c));
-        Assert.Equal("10@1x1;10@5x1", Render(Suggester.Suggest(book, SuggestionMode.Cheapest)));
+        // need 4: 2 @ 10 on Alpha + 2 @ 11 on Beta = 42; Gamma's 5 @ 20 = 100.
+        var book = Book(I(10, 4, W(1, "Alpha", (10, 2)), W(2, "Beta", (11, 2)), W(3, "Gamma", (20, 5))));
+        Assert.Equal("10@1x2;10@2x2", Render(Suggester.Suggest(book, SuggestionMode.Cheapest)));
     }
 
     [Fact]
-    public void Cheapest_EqualsShoppingPlannerPurchasesAggregated()
+    public void Cheapest_SurplusStackBeatsExactFit()
     {
-        var listings = new List<Listing>
+        // need 3: 3 @ 50 (150) fits exactly; 10 @ 2 (20) is cheaper with 7 surplus.
+        var book = Book(I(10, 3, W(1, "Alpha", (50, 3)), W(2, "Beta", (2, 10))));
+        Assert.Equal("10@2x10", Render(Suggester.Suggest(book, SuggestionMode.Cheapest)));
+    }
+
+    // 2026-11-24 superseded: Cheapest_TieOnPrice_NewerReviewFirst_ThenLowerWorldId expected "10@1x1;10@5x1" (newest unit first,
+    // then lower id). Under whole stacks the review tie-break compares the OLDEST review of the whole choice, and any two of those
+    // three stacks include a 3-day-old one, so review no longer separates them and lower world ids win: "10@1x1;10@2x1".
+    // The three tests below pin each tie-break separately.
+    [Fact]
+    public void Cheapest_TieOnCost_FewerUnitsWins_BeforeReview()
+    {
+        // need 2: Alpha 2 @ 6 (12, 5 days old) or Beta 3 @ 4 (12, new): the same cost, Alpha leaves no surplus.
+        var book = Book(I(10, 2, WO(1, "Alpha", (6, 2, 5)), WO(2, "Beta", (4, 3, 0))));
+        Assert.Equal("10@1x2", Render(Suggester.Suggest(book, SuggestionMode.Cheapest)));
+    }
+
+    [Fact]
+    public void Cheapest_TieOnCostAndUnits_NewerReviewWins_BeforeWorldId()
+    {
+        var book = Book(I(10, 1, WO(2, "Beta", (10, 1, 3)), WO(5, "Echo", (10, 1, 1))));
+        Assert.Equal("10@5x1", Render(Suggester.Suggest(book, SuggestionMode.Cheapest)));
+    }
+
+    [Fact]
+    public void Cheapest_FullTie_LowerWorldIdWins()
+    {
+        var book = Book(I(10, 2, WO(2, "Beta", (10, 1, 3)), WO(5, "Echo", (10, 1, 1)), WO(1, "Alpha", (10, 1, 3))));
+        Assert.Equal("10@1x1;10@2x1", Render(Suggester.Suggest(book, SuggestionMode.Cheapest)));
+        Assert.Equal("10@4x1", Render(Suggester.Suggest(Book(I(10, 1, W(9, "Nine", (10, 1)), W(4, "Four", (10, 1)))), SuggestionMode.Cheapest)));
+    }
+
+    // 2026-11-24 retired: Cheapest_EqualsShoppingPlannerPurchasesAggregated compared Cheapest against ShoppingPlanner, which still buys
+    // partial stacks, so it is no longer a valid reference (on its own book the planner buys Alpha 2, Beta 2, Gamma 2 for item 10,
+    // a partial Gamma stack). Its successor is the brute-force oracle below, which compares against every subset of whole stacks.
+    [Fact]
+    public void Cheapest_MatchesBruteForceOverAllStackSubsets_On300Books()
+    {
+        var rng = new Random(160_0000);
+        for (var n = 0; n < 300; n++)
         {
-            new(10, 1, "Alpha", 10, 2, false, T0),
-            new(10, 1, "Alpha", 40, 3, true, T0),
-            new(10, 2, "Beta", 15, 2, false, T0.AddDays(-1)),
-            new(10, 2, "Beta", 15, 2, false, T0),
-            new(10, 3, "Gamma", 15, 5, false, T0),
-            new(20, 2, "Beta", 7, 1, false, T0),
-            new(20, 3, "Gamma", 7, 1, false, T0),
-            new(20, 3, "Gamma", 9, 4, false, T0),
-            new(30, 1, "Alpha", 5, 2, false, T0),
-        };
-        var reqs = new[] { new Requirement(10, 6), new Requirement(20, 4), new Requirement(30, 9) };
-        var plan = ShoppingPlanner.Plan(reqs,
-            listings.GroupBy(l => l.ItemId).Select(g => new ItemListings(g.Key, g.ToList())).ToList(),
-            new HashSet<uint> { 1, 2, 3 }, new ExclusionState());
-        var expected = plan.Worlds.SelectMany(w => w.Purchases)
-            .GroupBy(p => (p.ItemId, p.WorldId))
-            .OrderBy(g => g.Key.ItemId).ThenBy(g => g.Key.WorldId)
-            .Select(g => new AllocationLine(g.Key.ItemId, g.Key.WorldId, g.Sum(p => p.Quantity)))
-            .ToList();
-
-        var items = reqs.OrderBy(r => r.ItemId).Select(r => new ItemOffers(r.ItemId, r.Quantity,
-            listings.Where(l => l.ItemId == r.ItemId).GroupBy(l => l.WorldId).OrderBy(g => g.Key)
-                .Select(g => new WorldOffer(g.Key, g.First().WorldName,
-                    g.OrderBy(l => l.PricePerUnit).ThenByDescending(l => l.LastReview)
-                        .Select(l => new PriceStep(l.PricePerUnit, l.Quantity, l.Hq, l.LastReview)).ToList()))
-                .ToList())).ToList();
-        var book = new OfferBook(items, new List<SkippedItem>());
-
-        Assert.Equal(Render(expected), Render(Suggester.Suggest(book, SuggestionMode.Cheapest)));
-        // item 30 is short in the planner too (needs 9, 2 for sale): both buy the 2 that exist
-        Assert.Single(plan.Shortfalls);
-        Assert.Contains("30@1x2", Render(expected));
+            var items = new List<ItemOffers>();
+            for (uint i = 1; i <= 3; i++)
+            {
+                var worlds = new List<WorldOffer>();
+                for (uint w = 1; w <= (uint)rng.Next(1, 5); w++)
+                    worlds.Add(new WorldOffer(w * 2, "W" + w, Enumerable.Range(0, rng.Next(1, 4))
+                        .Select(_ => StackBruteForce.RandomStep(rng, T0, maxQty: 9, maxPrice: 30)).OrderBy(s => s.UnitPrice).ToList()));
+                items.Add(new ItemOffers(i, rng.Next(1, 25), worlds));
+            }
+            var book = new OfferBook(items, new List<SkippedItem>());
+            var result = Suggester.SuggestDetailed(book, SuggestionMode.Cheapest);
+            Assert.Empty(result.ApproximateItemIds);
+            foreach (var item in items)
+            {
+                var all = StackBruteForce.All(item.Worlds.SelectMany(w => w.Steps).ToList());
+                var best = StackBruteForce.Cover(all, item.Needed);
+                var mine = result.Lines.Where(l => l.ItemId == item.ItemId).ToList();
+                Assert.Equal(best.Cost, Cost(book, mine));
+                Assert.Equal(best.Units, mine.Sum(l => (long)l.Quantity));
+                // Each world's lines must be bought at that world's best subset for the total; the oldest review across them must be
+                // the best achievable for this cost and unit count.
+                var oldest = DateTimeOffset.MaxValue;
+                foreach (var l in mine)
+                {
+                    var wo = item.Worlds.Single(w => w.WorldId == l.WorldId);
+                    foreach (var ix in wo.Stacks(l.Quantity)!)
+                        if (wo.Steps[ix].LastReview < oldest)
+                            oldest = wo.Steps[ix].LastReview;
+                }
+                Assert.Equal(best.Oldest, oldest);
+            }
+        }
     }
 
     // ---- FewestWorlds ----
@@ -193,9 +246,10 @@ public class SuggesterTests
             I(30, 2, W(3, "Gamma", (14, 5)), b));
         var cheap = Suggester.Suggest(book, SuggestionMode.Cheapest);
         var fewest = Suggester.Suggest(book, SuggestionMode.FewestWorlds);
-        Assert.Equal("10@1x2;20@3x2;30@3x2", Render(cheap));
+        // 2026-11-24 superseded: quantities were x2 (partial stacks); every stack here is 5 units.
+        Assert.Equal("10@1x5;20@3x5;30@3x5", Render(cheap));
         Assert.Equal(2, WorldsVisited(cheap));
-        Assert.Equal("10@2x2;20@2x2;30@2x2", Render(fewest));
+        Assert.Equal("10@2x5;20@2x5;30@2x5", Render(fewest));
         Assert.Equal(1, WorldsVisited(fewest));
         Assert.True(Cost(book, fewest) >= Cost(book, cheap));
     }
@@ -236,7 +290,8 @@ public class SuggesterTests
     {
         var a = W(1, "Alpha", (10, 5));
         var book = Book(I(10, 3, a), I(20, 4, W(2, "Beta", (10, 1)), W(3, "Gamma", (10, 1))));
-        Assert.Equal("10@1x3;20@2x1;20@3x1", Render(Suggester.Suggest(book, SuggestionMode.FewestWorlds)));
+        // 2026-11-24 superseded: was "10@1x3;20@2x1;20@3x1".
+        Assert.Equal("10@1x5;20@2x1;20@3x1", Render(Suggester.Suggest(book, SuggestionMode.FewestWorlds)));
     }
 
     [Fact]
@@ -250,14 +305,33 @@ public class SuggesterTests
         var cheap = Suggester.Suggest(book, SuggestionMode.Cheapest);
         var fewest = Suggester.Suggest(book, SuggestionMode.FewestWorlds);
         Assert.Equal(3, WorldsVisited(cheap));
-        Assert.Equal("1@1x1;2@1x2;2@3x2", Render(fewest));
+        // 2026-11-24 superseded: was "1@1x1;2@1x2;2@3x2".
+        Assert.Equal("1@1x5;2@1x2;2@3x2", Render(fewest));
+    }
+
+    [Fact]
+    public void FewestWorlds_FallbackCoversFromChosenWorldsWithWholeStacks()
+    {
+        // Items 1 and 2 put Alpha and Beta in the chosen set (each is the only seller of one item). Item 3 needs 5 and no world has
+        // 5: the chosen worlds together do (Alpha 3 @ 10, Beta 3 @ 1 + 1 @ 2), so it is covered from them alone, with whole stacks:
+        // Alpha 3 + Beta 3 = 6 units for 33 gil. Gamma (4 @ 1, which the cheapest plan uses with Beta's 1 @ 2) is never added.
+        var book = Book(
+            I(1, 1, W(1, "Alpha", (1, 1))),
+            I(2, 1, W(2, "Beta", (1, 1))),
+            I(3, 5, W(1, "Alpha", (10, 3)), W(2, "Beta", (1, 3), (2, 1)), W(3, "Gamma", (1, 4))));
+        var cheap = Suggester.Suggest(book, SuggestionMode.Cheapest);
+        Assert.Equal("1@1x1;2@2x1;3@2x1;3@3x4", Render(cheap));
+        var fewest = Suggester.Suggest(book, SuggestionMode.FewestWorlds);
+        Assert.Equal("1@1x1;2@2x1;3@1x3;3@2x3", Render(fewest));
+        Assert.Equal(1 + 1 + 33, Cost(book, fewest));
     }
 
     [Fact]
     public void FewestWorlds_TieOnItemCount_LowestCostThenNameThenId()
     {
         // lowest cost: Zed and Alpha both cover items 1 and 2, Zed is cheaper; R and S would split them (2 worlds)
-        Assert.Equal("1@1x1;2@1x1", Render(Suggester.Suggest(
+        // 2026-11-24 superseded: was "1@1x1;2@1x1" (partial stacks).
+        Assert.Equal("1@1x5;2@1x5", Render(Suggester.Suggest(
             Book(
                 I(1, 1, W(1, "Zed", (10, 5)), W(2, "Alpha", (20, 5)), W(3, "R", (1, 5))),
                 I(2, 1, W(1, "Zed", (10, 5)), W(2, "Alpha", (20, 5)), W(4, "S", (1, 5)))),
@@ -271,12 +345,38 @@ public class SuggesterTests
     }
 
     [Fact]
+    public void FewestWorlds_WorldCostIsTheWholeStackCover_NotThePartialPrice()
+    {
+        // A and B each cover items 1 and 2 (need 1). A sells 1 @ 10 per item (cover 10, total 20); B sells 3 @ 4 per item: partial
+        // pricing would say 4 each (8), but the whole stack costs 12 each (24). A must win the tie on item count. C and D make the
+        // cheapest plan visit two worlds, so the greedy one-world answer is the one returned.
+        var book = Book(
+            I(1, 1, W(1, "A", (10, 1)), W(2, "B", (4, 3)), W(3, "C", (1, 1))),
+            I(2, 1, W(1, "A", (10, 1)), W(2, "B", (4, 3)), W(4, "D", (1, 1))));
+        Assert.Equal("1@1x1;2@1x1", Render(Suggester.Suggest(book, SuggestionMode.FewestWorlds)));
+    }
+
+    [Fact]
+    public void FewestWorlds_LessSurplusThanCheapestIsNotCoveringLess()
+    {
+        // Item 1: A sells 2 @ 10 (exact fit, 20), B sells 5 @ 1 (5 gil, 3 surplus): cheapest buys B's 5. Item 2 is only on A, so
+        // the fewest-worlds plan buys both on A: 2 units of item 1, fewer than cheapest's 5 but the whole need. The safeguard compares
+        // units covered (capped at the need), so this one-world plan is kept.
+        var book = Book(
+            I(1, 2, W(1, "A", (10, 2)), W(2, "B", (1, 5))),
+            I(2, 1, W(1, "A", (3, 1))));
+        Assert.Equal("1@2x5;2@1x1", Render(Suggester.Suggest(book, SuggestionMode.Cheapest)));
+        Assert.Equal("1@1x2;2@1x1", Render(Suggester.Suggest(book, SuggestionMode.FewestWorlds)));
+    }
+
+    [Fact]
     public void FewestWorlds_MostItemsBeatsCheaperWorld()
     {
         var many = W(1, "Many", (50, 5));
         var one = W(2, "One", (1, 5));
         var book = Book(I(1, 1, many, one), I(2, 1, many));
-        Assert.Equal("1@1x1;2@1x1", Render(Suggester.Suggest(book, SuggestionMode.FewestWorlds)));
+        // 2026-11-24 superseded: was "1@1x1;2@1x1".
+        Assert.Equal("1@1x5;2@1x5", Render(Suggester.Suggest(book, SuggestionMode.FewestWorlds)));
     }
 
     private static OfferBook ReassignBook()
@@ -300,10 +400,29 @@ public class SuggesterTests
         var cheap = Suggester.Suggest(book, SuggestionMode.Cheapest);
         var fewest = Suggester.Suggest(book, SuggestionMode.FewestWorlds);
         Assert.Equal(4, WorldsVisited(cheap));
-        Assert.Equal("1@11x1;2@10x1;3@10x1;4@11x1;5@11x1;6@10x1", Render(fewest));
-        Assert.Equal(116, Cost(book, fewest));
+        // 2026-11-24 superseded: was x1 on every line and 116 gil; every stack is 5 units, so x5 and 580 gil.
+        Assert.Equal("1@11x5;2@10x5;3@10x5;4@11x5;5@11x5;6@10x5", Render(fewest));
+        Assert.Equal(580, Cost(book, fewest));
         Assert.Equal(2, WorldsVisited(fewest));
         Assert.True(WorldsVisited(fewest) <= WorldsVisited(cheap));
+    }
+
+    [Fact]
+    public void FewestWorlds_ReassignmentUsesTheWholeStackCover()
+    {
+        // X covers items 1,2,3,6 (chosen first), Y covers 1,4,5 (chosen second). Item 1: X sells 3 @ 4 (whole stack 12, partial 4),
+        // Y sells 1 @ 10 (10): the item moves to Y. Z sells item 2 cheaply so the cheapest plan needs three worlds and the greedy
+        // two-world plan is the one returned.
+        var book = Book(
+            I(1, 1, W(10, "X", (4, 3)), W(11, "Y", (10, 1))),
+            I(2, 1, W(10, "X", (5, 1)), W(12, "Z", (1, 1))),
+            I(3, 1, W(10, "X", (5, 1))),
+            I(4, 1, W(11, "Y", (5, 1))),
+            I(5, 1, W(11, "Y", (5, 1))),
+            I(6, 1, W(10, "X", (5, 1))));
+        var fewest = Suggester.Suggest(book, SuggestionMode.FewestWorlds);
+        Assert.Equal(2, WorldsVisited(fewest));
+        Assert.Contains("1@11x1", Render(fewest));
     }
 
     [Fact]
@@ -313,7 +432,8 @@ public class SuggesterTests
         var book = Book(
             I(1, 1, W(1, "X", (100, 5)), W(2, "Q", (1, 5))),
             I(2, 1, W(1, "X", (5, 5))));
-        Assert.Equal("1@1x1;2@1x1", Render(Suggester.Suggest(book, SuggestionMode.FewestWorlds)));
+        // 2026-11-24 superseded: was "1@1x1;2@1x1".
+        Assert.Equal("1@1x5;2@1x5", Render(Suggester.Suggest(book, SuggestionMode.FewestWorlds)));
     }
 
     [Fact]
@@ -332,8 +452,9 @@ public class SuggesterTests
             I(8, 1, W(9, "Same", (50, 5))),
             I(9, 1, W(8, "same", (50, 5))));
         var fewest = Render(Suggester.Suggest(book, SuggestionMode.FewestWorlds));
-        Assert.Contains("1@6x1", fewest);
-        Assert.Contains("7@8x1", fewest);
+        // 2026-11-24 superseded: were "1@6x1" and "7@8x1".
+        Assert.Contains("1@6x5", fewest);
+        Assert.Contains("7@8x5", fewest);
     }
 
     [Fact]
@@ -347,7 +468,8 @@ public class SuggesterTests
             I(3, 1, W(2, "Y", (1000, 5))),
             I(4, 1, W(3, "Z", (1000, 5))));
         var fewest = Suggester.Suggest(book, SuggestionMode.FewestWorlds);
-        Assert.Equal("1@2x1;2@3x1;3@2x1;4@3x1", Render(fewest));
+        // 2026-11-24 superseded: was "1@2x1;2@3x1;3@2x1;4@3x1".
+        Assert.Equal("1@2x5;2@3x5;3@2x5;4@3x5", Render(fewest));
         Assert.Equal(2, WorldsVisited(fewest));
     }
 
@@ -383,6 +505,43 @@ public class SuggesterTests
             Assert.Equal(expected, Render(Suggester.Suggest(shuffled, SuggestionMode.FewestWorlds)));
         }
     }
+
+    // ---- size guard ----
+
+    [Theory]
+    [InlineData(SuggestionMode.Cheapest)]
+    [InlineData(SuggestionMode.FewestWorlds)]
+    public void SuggestDetailed_FlagsItemsSolvedByTheGreedyFallback(SuggestionMode mode)
+    {
+        // Fixture changed 2026-11-24: it was item 7 needing 1 from A (1,000,000 at 1) and B (1 at 5), which is now solved exactly
+        // because each stack covers the need alone (see SuggestDetailed_OneStackThatCoversAlone_IsExact). Expectations unchanged.
+        // Item 7 needs 500,001 from stacks below the need (500,000 twice at 1, 2 at 5): the exact table would need totals up to
+        // 1,000,000, past the 1,000,000-total bound, so the greedy fallback takes the two big stacks. Item 3 is small and exact.
+        var book = Book(
+            I(3, 2, W(1, "A", (5, 2))),
+            I(7, 500_001, W(1, "A", (1, 500_000), (1, 500_000), (5, 2))));
+        var result = Suggester.SuggestDetailed(book, mode);
+        Assert.Equal(new uint[] { 7 }, result.ApproximateItemIds);
+        Assert.Equal("3@1x2;7@1x1000000", Render(result.Lines));
+        Assert.Equal(Render(Suggester.Suggest(book, mode)), Render(result.Lines));
+    }
+
+    [Fact]
+    public void SuggestDetailed_OneStackThatCoversAlone_IsExact()
+    {
+        // The fixture the test above used before 2026-11-24 (it expected item 7 flagged and 1,000,000 units bought on A for one
+        // needed unit). Every stack covers a need of 1 alone, so no table is needed: the cheapest plan buys B's 1 unit at 5 gil.
+        var book = Book(
+            I(3, 2, W(1, "A", (5, 2))),
+            I(7, 1, W(1, "A", (1, 1_000_000)), W(2, "B", (5, 1))));
+        var result = Suggester.SuggestDetailed(book, SuggestionMode.Cheapest);
+        Assert.Empty(result.ApproximateItemIds);
+        Assert.Equal("3@1x2;7@2x1", Render(result.Lines));
+    }
+
+    [Fact]
+    public void SuggestDetailed_ExactBookHasNoApproximateItems()
+        => Assert.Empty(Suggester.SuggestDetailed(ReassignBook(), SuggestionMode.FewestWorlds).ApproximateItemIds);
 
     // ---- determinism ----
 
@@ -447,16 +606,23 @@ public class SuggesterTests
                     lines.Select(l => (l.ItemId, l.WorldId)));
                 Assert.Equal(lines.Count, lines.Select(l => (l.ItemId, l.WorldId)).Distinct().Count());
                 foreach (var l in lines)
-                    Assert.True(l.Quantity <= book.Items.Single(i => i.ItemId == l.ItemId).Worlds.Single(w => w.WorldId == l.WorldId).UnitsForSale);
+                {
+                    var offer = book.Items.Single(i => i.ItemId == l.ItemId).Worlds.Single(w => w.WorldId == l.WorldId);
+                    Assert.True(l.Quantity <= offer.UnitsForSale);
+                    // 2026-11-24 new: every line is a legal total (a sum of whole stacks) on its world.
+                    Assert.NotNull(offer.ExactCost(l.Quantity));
+                }
                 foreach (var item in book.Items)
                 {
                     var got = lines.Where(l => l.ItemId == item.ItemId).Sum(l => l.Quantity);
-                    Assert.Equal(Math.Min(item.Needed, item.Worlds.Sum(w => w.UnitsForSale)), got);
+                    // 2026-11-24 superseded: was Assert.Equal(min(Needed, supply), got). Whole stacks can overshoot, never undershoot.
+                    Assert.True(got >= Math.Min(item.Needed, item.Worlds.Sum(w => w.UnitsForSale)), $"book {n} item {item.ItemId}");
                 }
             }
             Assert.True(WorldsVisited(fewest) <= WorldsVisited(cheap), $"book {n}");
             Assert.True(Cost(book, cheap) <= Cost(book, fewest), $"book {n}");
-            Assert.Equal(Supplied(cheap), Supplied(fewest));
+            // 2026-11-24 superseded: was Supplied(cheap) == Supplied(fewest) (raw units). Surplus may differ; covered units may not.
+            Assert.Equal(Covered(book, cheap), Covered(book, fewest));
         }
     }
 }

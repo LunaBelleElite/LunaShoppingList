@@ -61,43 +61,8 @@ public class WorldOfferTests
     [Fact]
     public void MinUnitPrice_EmptyIsZero() => Assert.Equal(0, W().MinUnitPrice);
 
-    [Theory]
-    [InlineData(1, 10)]
-    [InlineData(3, 10)]
-    [InlineData(4, 25)]
-    [InlineData(5, 25)]
-    [InlineData(6, 40)]
-    [InlineData(9, 40)]
-    [InlineData(100, 40)]
-    [InlineData(0, 0)]
-    [InlineData(-4, 0)]
-    public void MaxUnitPriceFor_IsPriceOfLastStepTouched(int qty, int price) => Assert.Equal(price, Ladder().MaxUnitPriceFor(qty));
-
-    [Fact]
-    public void MaxUnitPriceFor_EmptyIsZero() => Assert.Equal(0, W().MaxUnitPriceFor(3));
-
-    [Theory]
-    [InlineData(1, 1)]
-    [InlineData(3, 1)]
-    [InlineData(4, 5)]
-    [InlineData(6, 5)]
-    [InlineData(9, 5)]
-    [InlineData(100, 5)]
-    public void OldestReviewFor_IsOldestAmongStepsTouched(int qty, int oldestAgeDays)
-        => Assert.Equal(T0.AddDays(-oldestAgeDays), Ladder().OldestReviewFor(qty));
-
-    [Fact]
-    public void OldestReviewFor_PicksOldestEvenWhenNotLastTouched()
-        => Assert.Equal(T0.AddDays(-9), W(S(1, 1, 9), S(2, 1, 1), S(3, 1, 2)).OldestReviewFor(3));
-
-    [Theory]
-    [InlineData(0)]
-    [InlineData(-3)]
-    public void OldestReviewFor_NothingBoughtIsMaxValue(int qty)
-        => Assert.Equal(DateTimeOffset.MaxValue, Ladder().OldestReviewFor(qty));
-
-    [Fact]
-    public void OldestReviewFor_EmptyIsMaxValue() => Assert.Equal(DateTimeOffset.MaxValue, W().OldestReviewFor(2));
+    // 2026-11-24: the MaxUnitPriceFor and OldestReviewFor tests (6 methods) were deleted with those partial-stack members; the
+    // chosen-stacks equivalents are pinned through Cover in WorldOfferStackTests and LinePricer in the allocation and route tests.
 
     [Fact]
     public void Equality_IgnoresWhetherUnitsForSaleWasAlreadyRead()

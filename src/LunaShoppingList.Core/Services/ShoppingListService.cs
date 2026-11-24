@@ -1,9 +1,9 @@
 namespace LunaShoppingList.Core;
 
 /// <summary>
-/// Runs the whole pipeline from ingredient totals to a <see cref="ShoppingPlan"/>:
+/// Runs the pipeline from ingredient totals to an <see cref="OfferBook"/>:
 /// resolves the travel scope, fetches Universalis listings for the items that will
-/// actually be bought, and plans the purchases grouped by world.
+/// actually be bought, and groups what each world offers per item.
 /// </summary>
 public sealed class ShoppingListService
 {
@@ -31,30 +31,8 @@ public sealed class ShoppingListService
     public bool IsMarketable(uint itemId) => _isMarketable?.Invoke(itemId) ?? true;
 
     /// <summary>
-    /// Builds a shopping plan for <paramref name="requirements"/>.
-    /// Excluded items are not looked up and appear in <see cref="ShoppingPlan.Skipped"/>.
-    /// </summary>
-    /// <param name="requirements">Ingredient totals (item id, quantity).</param>
-    /// <param name="scope">Which worlds may be shopped at.</param>
-    /// <param name="exclusions">Items the user chose not to buy.</param>
-    /// <param name="progress">Optional human-readable progress messages (may be called from any thread).</param>
-    /// <param name="ct">Cancellation.</param>
-    /// <exception cref="InvalidOperationException">The current world is unknown (not logged in).</exception>
-    public async Task<ShoppingPlan> BuildPlanAsync(
-        IReadOnlyList<Requirement> requirements,
-        TravelScopeKind scope,
-        ExclusionState exclusions,
-        IProgress<string>? progress,
-        CancellationToken ct)
-    {
-        var (merged, allowedWorldIds) = await FetchListingsAsync(requirements, scope, exclusions, progress, ct).ConfigureAwait(false);
-        return ShoppingPlanner.Plan(requirements, merged, allowedWorldIds, exclusions);
-    }
-
-    /// <summary>
-    /// Fetches prices exactly as <see cref="BuildPlanAsync"/> does (same scope rules, same Universalis data-center mapping,
-    /// same early return when nothing is to be bought) but returns what the user can choose from, per item and world,
-    /// instead of one fixed plan.
+    /// Fetches prices for the scope (Universalis's own data-center mapping; no client call when nothing is to be bought) and
+    /// returns what the user can choose from, per item and world.
     /// </summary>
     /// <param name="requirements">Ingredient totals (item id, quantity).</param>
     /// <param name="scope">Which worlds may be shopped at.</param>
@@ -98,7 +76,7 @@ public sealed class ShoppingListService
     }
 
     /// <summary>
-    /// Shared by both public methods: resolves the scope, returns no listings (and makes no client call) when nothing is to be
+    /// Resolves the scope, returns no listings (and makes no client call) when nothing is to be
     /// bought, otherwise fetches Universalis listings per data center and merges them per item.
     /// </summary>
     private async Task<(IReadOnlyList<ItemListings> Merged, HashSet<uint> AllowedWorldIds)> FetchListingsAsync(

@@ -7,6 +7,11 @@ namespace LunaShoppingList.Core.Tests;
 /// route summarizer, with only the Universalis client and the world data faked. Expected numbers come from an oracle that works
 /// straight from the raw listings, or are worked out by hand in the comments.
 /// </summary>
+/// <remarks>
+/// 2026-11-24 (release 0.16.0.0, whole stacks): a listing can only be bought whole. The oracle enumerates every subset of an item's
+/// valid listings (<see cref="StackBruteForce"/>); before that date it took units cheapest-first, and ShoppingPlanner (removed the
+/// same day) gave the cheapest total.
+/// </remarks>
 public class TradeoffPipelineTests
 {
     private static readonly DateTimeOffset T0 = new(2026, 11, 1, 0, 0, 0, TimeSpan.Zero);
@@ -88,7 +93,29 @@ public class TradeoffPipelineTests
 
         public int Stock(uint item, uint world) => Units(item, world).Count;
 
-        public long LineCost(uint item, uint world, int qty) => Units(item, world).Take(qty).Sum(p => (long)p);
+        public int Supply(uint item) => ValidWorlds.Sum(w => Stock(item, w));
+
+        // 2026-11-24: whole stacks. Each valid listing is one stack; prices below come from every subset of the stacks.
+        // Before: LineCost took the cheapest qty units on the world, part of a stack allowed.
+
+        /// <summary>The item's valid listings on the worlds <paramref name="onWorld"/> accepts, one whole stack each.</summary>
+        public List<PriceStep> Stacks(uint item, Func<uint, bool> onWorld)
+            => (Pool.GetValueOrDefault(item) ?? [])
+                .Where(l => Valid(l) && onWorld(l.WorldId))
+                .Select(l => new PriceStep(l.PricePerUnit, l.Quantity, l.Hq, l.LastReview))
+                .ToList();
+
+        /// <summary>Gil for exactly <paramref name="qty"/> units on one world as whole stacks; a quantity no set of stacks sums to fails the test.</summary>
+        public long LineCost(uint item, uint world, int qty)
+            => StackBruteForce.Exact(StackBruteForce.All(Stacks(item, w => w == world)), qty)?.Cost
+               ?? throw new Xunit.Sdk.XunitException($"{item}@{world}x{qty} is not a sum of whole stacks there");
+
+        /// <summary>Cheapest set of the item's stacks on the accepted worlds with at least <paramref name="need"/> units (all of them when short).</summary>
+        public long CoverCost(uint item, int need, Func<uint, bool> onWorld)
+            => StackBruteForce.Cover(StackBruteForce.All(Stacks(item, onWorld)), need).Cost;
+
+        /// <summary>The cheapest whole-stack plan's total over every valid world.</summary>
+        public long CheapestTotal() => Need().Sum(kv => CoverCost(kv.Key, kv.Value, ValidWorlds.Contains));
     }
 
     private sealed class FakeWorlds(Fx fx) : IWorldData
@@ -115,7 +142,9 @@ public class TradeoffPipelineTests
         }
     }
 
-    private sealed record Run(OfferBook Book, IReadOnlyList<PlanOption> Options, long PlannerTotal);
+    // 2026-11-24: PlannerTotal (ShoppingPlanner's partial-stack total, planner removed) became OracleTotal (Fx.CheapestTotal, whole
+    // stacks), and SuggestedTotal (the Suggester's Cheapest plan, summarized) was added as the in-pipeline second reference.
+    private sealed record Run(OfferBook Book, IReadOnlyList<PlanOption> Options, long OracleTotal, long SuggestedTotal);
 
     private static async Task<Run> RunAsync(Fx fx)
     {
@@ -125,9 +154,8 @@ public class TradeoffPipelineTests
             ex.SetExcluded(id, true);
         var book = await svc.BuildOfferBookAsync(fx.Reqs, TravelScopeKind.CrossWorld, ex, null, default);
         var options = PlanFrontier.Build(book);
-        var raw = fx.Pool.Select(kv => new ItemListings(kv.Key, kv.Value)).ToList();
-        var planner = ShoppingPlanner.Plan(fx.Reqs, raw, Fx.ValidWorlds, ex);
-        return new Run(book, options, planner.Worlds.Sum(w => w.Total));
+        var suggested = RouteSummarizer.Summarize(book, Suggester.Suggest(book, SuggestionMode.Cheapest)).GrandTotal;
+        return new Run(book, options, fx.CheapestTotal(), suggested);
     }
 
     private static RouteSummary Applied(OfferBook book, PlanOption o)
@@ -160,18 +188,22 @@ public class TradeoffPipelineTests
         Assert.NotEmpty(os);
 
         var first = os[0];
-        Assert.Equal(r.PlannerTotal, first.Total);
+        Assert.Equal(r.OracleTotal, first.Total);
+        Assert.Equal(r.SuggestedTotal, first.Total);
         Assert.Equal(0L, first.ExtraGil);
         Assert.Equal(0.0, first.ExtraPercent);
         var cheapSummary = Applied(r.Book, first);
-        Assert.Equal(r.PlannerTotal, cheapSummary.GrandTotal);
-        var cheapUnits = Units(first);
+        Assert.Equal(r.OracleTotal, cheapSummary.GrandTotal);
+        var need = fx.Need();
+        // items that get any line at all: needed and sold somewhere in scope
+        var buyable = need.Keys.Where(item => fx.Supply(item) > 0).Order().ToList();
 
         for (var i = 0; i < os.Count; i++)
         {
             var o = os[i];
             var s = Applied(r.Book, o);
             Assert.Equal(o.Total, s.GrandTotal);
+            // exact stack costs: the lines' whole-stack prices (LineCost fails on a line that is not a sum of whole stacks) ...
             Assert.Equal(o.Total, o.Lines.Sum(l => fx.LineCost(l.ItemId, l.WorldId, l.Quantity)));
             Assert.Equal(o.WorldCount, s.WorldCount);
             Assert.Equal(o.WorldCount, o.Lines.Select(l => l.WorldId).Distinct().Count());
@@ -180,9 +212,16 @@ public class TradeoffPipelineTests
             Assert.True(o.ExtraGil >= 0);
             Assert.Equal(first.Total == 0 ? 0.0 : o.ExtraGil * 100.0 / first.Total, o.ExtraPercent, 9);
 
+            // 2026-11-24: was "every option buys exactly the cheapest option's units per item" (and so no fewer in total). With
+            // whole stacks an option may carry a different surplus; capped at the need, every item still gets exactly
+            // min(Needed, supply in the book), and every buyable item gets a line.
             var units = Units(o);
-            Assert.Equal(cheapUnits.OrderBy(kv => kv.Key), units.OrderBy(kv => kv.Key));
-            Assert.True(units.Values.Sum() >= cheapUnits.Values.Sum());
+            Assert.Equal(buyable, units.Keys.Order());
+            foreach (var item in buyable)
+                Assert.Equal(Math.Min(need[item], fx.Supply(item)), Math.Min(units[item], need[item]));
+            // ... and, new 2026-11-24, the cheapest whole stacks on the option's own worlds for that target, by brute force
+            var worlds = o.Lines.Select(l => l.WorldId).ToHashSet();
+            Assert.Equal(buyable.Sum(item => fx.CoverCost(item, Math.Min(need[item], fx.Supply(item)), worlds.Contains)), o.Total);
             foreach (var l in o.Lines)
             {
                 Assert.True(l.Quantity > 0);
@@ -268,7 +307,11 @@ public class TradeoffPipelineTests
     public async Task Realistic_FirstOptionIsTheCheapestPlanWithNoExtra()
     {
         var r = await RunAsync(Realistic());
-        Assert.Equal(r.PlannerTotal, r.Options[0].Total);
+        // 2026-11-24: was r.PlannerTotal (ShoppingPlanner, partial stacks, removed). Hand-worked whole-stack cheapest plan, per item
+        // (see RedesignPipelineTests.Realistic_CheapestLinesAreTheHandWorkedAnswers, same listings): 101 400, 102 15,400, 103 5,450,
+        // 104 660, 107 2,400, 108 1,920, 109 1,400, 110 750, 111 11,100, 112 6,000.
+        Assert.Equal(45_480L, r.Options[0].Total);
+        Assert.Equal(r.OracleTotal, r.Options[0].Total);
         Assert.Equal(0L, r.Options[0].ExtraGil);
         Assert.Equal(0.0, r.Options[0].ExtraPercent);
     }
@@ -297,14 +340,23 @@ public class TradeoffPipelineTests
 
     // ---------------------------------------------------------------- the hand-worked outlier fixture
 
-    // Items 1-4 (need 10 each): worlds 3, 4, 5, 6 each sell one of them at 10; the hub world 2 sells all four at 11.
-    // Item 5 (need 5): world 7 sells 4 at 100 and 1 at 100,000 (the outlier); world 9 sells 5 at 1,000.
-    // Cheapest: items 1-4 on their own worlds = 4 x 100 = 400; item 5 = 4 x 100 + 1 x 1,000 = 1,400. Total 1,800 over six worlds
-    // (3, 4, 5, 6, 7, 9).
+    // Items 1-4 (need 10 each): worlds 3, 4, 5, 6 each sell one stack of 10 of one of them at 10; the hub world 2 sells a 10-stack
+    // of all four at 11.
+    // Item 5 (need 5): world 7 sells a 4-stack at 100 and a 1-stack at 100,000 (the outlier); world 9 sells a 1-stack and a 4-stack
+    // at 1,000.
+    // Cheapest: items 1-4 on their own worlds = 4 x 100 = 400; item 5 = the 4-stack at 100 + the 1-stack at 1,000 = 1,400
+    // (the other covers of 5: both of world 9's stacks 5,000, 4@100 + 4@1,000 = 4,400, world 7's two 100,400). Total 1,800 over six
+    // worlds (3, 4, 5, 6, 7, 9).
     // Moving k of the four items to the hub (110 each instead of 100) while still buying item 5 on 7 and 9:
     //   k=1: 1,810 on six worlds (dominated), k=2: 1,820 on five worlds, k=3: 1,830 on four, k=4: 1,840 on three.
-    // Visiting only the hub and world 9 buys item 5 entirely at 1,000: 440 + 5,000 = 5,440 on two worlds (extra 3,640, 202.2%).
-    // One world cannot supply everything. The 100,000 outlier is never bought.
+    // Visiting only the hub and world 9 buys both of world 9's stacks: 440 + 5,000 = 5,440 on two worlds (extra 3,640, 202.2%);
+    // the hub and world 7 would cost 440 + 100,400. One world cannot supply everything. The 100,000 outlier is never bought.
+    //
+    // 2026-11-24 (whole stacks), fixture changed: world 9 used to sell ONE 5-stack at 1,000, and the cheapest plan bought one unit
+    // of it. Whole, that stack makes world 9 alone the cheapest cover of item 5 (5,000, against 4@100 + 5@1,000 = 5,400), every
+    // option then pays 5,000 for item 5, and the expensive two-world tail this fixture exists for disappears (options 5,400 /
+    // 5,420 / 5,430 / 5,440; pinned by Outlier_WithOneFiveStackOnWorld9_EveryOptionPaysForTheWholeStack below). Splitting it into
+    // a 1-stack and a 4-stack restores the scenario with whole stacks, and every number above is re-derived for whole stacks.
     private static Fx Outlier()
     {
         var fx = new Fx { Reqs = [new(1, 10), new(2, 10), new(3, 10), new(4, 10), new(5, 5)] };
@@ -314,8 +366,26 @@ public class TradeoffPipelineTests
             fx.Add(i, 2 + i, 10, 10);
         }
         fx.Add(5, 7, 100, 4); fx.Add(5, 7, 100_000, 1);
-        fx.Add(5, 9, 1000, 5);
+        fx.Add(5, 9, 1000, 1); fx.Add(5, 9, 1000, 4);
         return fx;
+    }
+
+    [Fact]
+    public async Task Outlier_WithOneFiveStackOnWorld9_EveryOptionPaysForTheWholeStack()
+    {
+        // The original outlier fixture (before 2026-11-24): world 9 sells item 5 as one 5-stack at 1,000. With whole stacks item 5's
+        // cheapest cover is that stack alone (5,000; 4@100 + 5@1,000 = 5,400 and world 7's two stacks 100,400 are dearer), so the
+        // cheapest plan visits worlds 3, 4, 5, 6 and 9 for 400 + 5,000 = 5,400. Moving k of items 1-4 to the hub then costs 10 each:
+        // k=1 5,410 on five worlds (dominated), k=2 5,420 on four, k=3 5,430 on three, k=4 5,440 on two (hub and world 9).
+        var fx = Outlier();
+        fx.Pool[5].RemoveAll(l => l.WorldId == 9);
+        fx.Add(5, 9, 1000, 5);
+        var r = await RunAsync(fx);
+        Assert.Equal([(5, 5400L, 0L), (4, 5420L, 20L), (3, 5430L, 30L), (2, 5440L, 40L)],
+            r.Options.Select(o => (o.WorldCount, o.Total, o.ExtraGil)));
+        Assert.Equal("1@2x10;2@2x10;3@2x10;4@2x10;5@9x5", FlatLines(r.Options[^1]));
+        Assert.Equal(2, PlanFrontier.Pick(r.Options, 40)!.WorldCount);
+        await AssertTradeoffAsync(fx);
     }
 
     [Fact]
@@ -435,7 +505,10 @@ public class TradeoffPipelineTests
         fx.Add(2, 3, 5, 6);
         var r = await RunAsync(fx);
         var only = Assert.Single(r.Options);
-        Assert.Equal((1, 4 * 10L + 6 * 5), (only.WorldCount, only.Total));
+        // 2026-11-24 (whole stacks): was 4 * 10 + 6 * 5 = 70 (4 units of the 9-stack). Item 1 needs 4 and must take a whole stack:
+        // 9@10 = 90 beats 9@20 = 180; item 2 takes its 6-stack at 5. 90 + 30 = 120.
+        Assert.Equal((1, 9 * 10L + 6 * 5), (only.WorldCount, only.Total));
+        Assert.Equal("1@3x9;2@3x6", FlatLines(only));
         Assert.Equal(0L, only.ExtraGil);
         Assert.All(only.Lines, l => Assert.Equal(3u, l.WorldId));
         Assert.Same(only, PlanFrontier.Pick(r.Options, 1_000_000));
