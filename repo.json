@@ -3,7 +3,7 @@
     "Author": "LunaBelleElite",
     "Name": "Luna Shopping List",
     "InternalName": "LunaShoppingList",
-    "AssemblyVersion": "0.17.0.0",
+    "AssemblyVersion": "0.17.0.1",
     "Description": "Builds a price-optimised shopping list, grouped by world, from an Artisan crafting list using current Universalis prices.",
     "Punchline": "Builds a price-optimised shopping list from an Artisan crafting list.",
     "Tags": [
@@ -21,10 +21,10 @@
     "IsHide": false,
     "IsTestingExclusive": false,
     "DownloadCount": 0,
-    "LastUpdate": 1795532957,
-    "Changelog": "- New Allagan Tools lists tab in the list browser. Open one of your Allagan Tools craft lists and it works out the materials, subcrafts included. If Allagan Tools isn't loaded, the tab says so.\n- New Send to Allagan Tools button in Import / Export. It makes a new craft list from one of your lists. Allagan Tools can't delete lists over its API, so sending twice makes two, and high quality isn't kept.\n- Untick crafted items when a list opens and Ignore listings older than (hours) now sit above the tabs, so you can reach them from any tab.\n- When Buy only what I lack leaves nothing to buy, the old results window closes instead of staying open.",
-    "DownloadLinkInstall": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.17.0.0/latest.zip",
-    "DownloadLinkUpdate": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.17.0.0/latest.zip",
-    "DownloadLinkTesting": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.17.0.0/latest.zip"
+    "LastUpdate": 1795546191,
+    "Changelog": "- Big lists on busy items are now solved exactly more often, so the (estimate) tag shows up less. Prices that were already exact don't change.",
+    "DownloadLinkInstall": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.17.0.1/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.17.0.1/latest.zip",
+    "DownloadLinkTesting": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.17.0.1/latest.zip"
   }
 ]
