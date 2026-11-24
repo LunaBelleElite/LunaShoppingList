@@ -3,12 +3,12 @@
 **Turn a crafting list into a shopping list that tells you which world to buy each thing on.**
 
 Luna Shopping List is a Dalamud plugin for Final Fantasy XIV. Open one of your
-Artisan or Allagan Tools crafting lists, or a list you made in the plugin, and press Find prices.
-It asks Universalis what everything costs right now and shows each item once,
-with the worlds selling it. You can pick where to buy each thing yourself, or
-let it suggest the plan with the fewest worlds for what you're willing to spend.
-It also shows how many of each item you already have, can leave that out of
-the bill, and reads and writes Teamcraft, Artisan and Allagan Tools lists.
+Artisan or Allagan Tools crafting lists, or a list you made in the plugin, and
+press Find prices. It asks Universalis what everything costs right now and shows
+each item once, with the worlds selling it. Pick where to buy each thing
+yourself, or let it suggest the plan with the fewest worlds for what you're
+willing to spend. It also counts what you already own and can leave that off the
+bill, and it reads and writes Teamcraft, Artisan and Allagan Tools lists.
 
 It never travels and never buys anything. It tells you where to go. If you have
 Lifestream, clicking a world name asks Lifestream to take you there.
@@ -18,7 +18,7 @@ an issue here and say what you did.
 
 ## Add the repository in the game
 
-The plugin lives in its own Dalamud repository, so you add that once.
+The plugin has its own Dalamud repository, so you add that once.
 
 1. Type `/xlsettings` and open the **Experimental** tab.
 2. Under **Custom Plugin Repositories**, paste this address:
@@ -31,22 +31,22 @@ plugin this way, so only add repositories from people you trust.
 
 ## Pick a list
 
-Type `/lsl` to open the list browser. It has four tabs. A list you pick opens
-in its own window, and Find prices there opens a results window. You can have
+Type `/lsl` to open the list browser. It has four tabs. A list you pick opens in
+its own window, and Find prices there opens a results window. You can have
 several of each open at once. Above the tabs sit **Untick crafted items when a
-list opens** and **Ignore listings older than (hours)**, which apply to every
+list opens** and **Ignore listings older than (hours)**, and both apply to every
 list. Tick the first and lists open with every craftable ingredient unticked, so
 you only buy raw materials.
 
 **Artisan crafting lists.** Click a list to open it. The filter box narrows the
 names, and **Refresh lists** reads them from Artisan again. Artisan's premade and
 relic lists can't be read here. Copy them with Artisan's **Export List** and use
-the Import tab.
+the Import / Export tab.
 
-**Allagan Tools lists.** Your Allagan Tools craft lists. Click one to open it,
-and the materials are worked out with subcrafts, the same as in My shopping
-lists. **Save as shopping list** keeps a copy you can edit. If Allagan Tools
-isn't loaded, the tab says so.
+**Allagan Tools lists.** Click one of your Allagan Tools craft lists to open it.
+The materials are worked out with subcrafts, the same as in My shopping lists.
+**Save as shopping list** keeps a copy you can edit. If Allagan Tools isn't
+loaded, the tab says so.
 
 **My shopping lists.** Lists you build yourself.
 
@@ -55,11 +55,11 @@ isn't loaded, the tab says so.
    be in any order. Only items sold on the market board are offered.
 3. Set the quantity. **Add** puts the item on the list as it is. **Add with
    subcrafts** keeps it as a goal and works out the raw materials for all your
-   goals together, crystals included, so a part two goals share is only counted
-   once. Where several recipes make an item, it uses the first one. The button
-   is greyed out for items that can't be crafted.
+   goals together, crystals included, so a part that two goals share is only
+   counted once. Where several recipes make an item, it uses the first one.
+   The button is greyed out for items that can't be crafted.
 4. Change a quantity and the materials follow. **Remove** takes a row or goal
-   off. The materials are worked out for you, so you can't edit them.
+   off. You can't edit the materials, because they're worked out for you.
 5. **Shop for this list** opens it. **Rename** and **Delete** are there too.
    Delete changes to **Confirm delete**, so you press it twice.
 
@@ -74,24 +74,24 @@ isn't loaded, the tab says so.
   materials.
 - Export: pick a list. **Open in Teamcraft** opens Teamcraft's import page in
   your browser. **Copy for Artisan** copies the list with every subcraft, ready
-  for Artisan's **Import List From Clipboard (Artisan Export)**. It works for My
+  for Artisan's **Import List From Clipboard (Artisan Export)**, and works for My
   shopping lists only. **Copy Teamcraft link** copies a link to send someone.
   They open it in a browser, not in Teamcraft's import dialog. **Send to
   Allagan Tools** makes a new craft list there. Allagan Tools can't delete
   lists over its API, so sending twice makes two, and high quality isn't kept.
-  It reads the list back and tells you if Allagan Tools didn't take it.
+  The plugin reads the list back and tells you if Allagan Tools didn't take it.
 - Exports only include items that can be crafted, and tell you what was left out.
 
 ## Choose what to buy
 
 The list window shows every ingredient with a **Buy** box.
 
-- **Where to shop**: **My region (cross-world)** is the worlds you can reach from
-  a main-city aetheryte. **All data centers** adds the other regions, which need
-  Data Center Travel. Every list window shares this choice.
+- **Where to shop**: **My region (cross-world)** covers the worlds you can reach
+  from a main-city aetheryte. **All data centers** adds the other regions, which
+  need Data Center Travel. Every list window shares this choice.
 - Untick anything you don't want to buy. **Tick all** ticks every row, and reads
-  **Untick all** once they're all ticked. Your ticks are saved for Artisan lists and My
-  shopping lists.
+  **Untick all** once they're all ticked. Your ticks are saved for Artisan lists
+  and My shopping lists.
 - **Untick items I have enough of** unticks rows where your bags, saddlebag and
   retainers already cover the quantity. It doesn't count your house.
 - **Untick items in my house** unticks rows your house already covers.
@@ -102,11 +102,12 @@ The list window shows every ingredient with a **Buy** box.
   ticked if its count isn't known yet. **Undo** takes back the last button you
   pressed. It only goes back one step, and loading the list or ticking a row
   yourself clears it.
-- Hover a greyed-out button to see why. Find prices needs at least one row ticked.
-- **Buy only what I lack**, next to Find prices, is off until you tick it. Then
-  Find prices only prices what's left after your bags, saddlebag and retainers.
-  Hover it to read this. The results show `need 10 (you hold 40 of 50)`, and a
-  dim note lists items you already have enough of.
+- Hover a greyed-out button to see why. Find prices needs at least one row
+  ticked.
+- **Buy only what I lack**, next to Find prices, is off until you tick it. Once
+  it's ticked, Find prices only looks up what's left after your bags, saddlebag
+  and retainers. The results show `need 10 (you hold 40 of 50)`, and a dim note
+  lists items you already have enough of.
 - **Ignore listings older than (hours)**, above the list browser's tabs, skips
   old listings. It starts at 24, and 0 turns it off. The results say how many
   listings were hidden.
@@ -115,39 +116,40 @@ The list window shows every ingredient with a **Buy** box.
 - **Reload list** reads the list again. Use it after changing the list somewhere
   else, or when the window says recipe data is still loading. If recipe data
   fails to load, it tries 3 times and stops, and Reload list starts it again.
-- **Find prices** gets prices from Universalis and opens the results window.
+- **Find prices** asks Universalis for prices and opens the results window.
   **Cancel build** stops it.
 
 The columns:
 
 - **On you** counts your bags, crystals and saddlebag. **Retainers** counts what
-  your retainers hold, market listings included. Hover it to see which retainer.
-  **House** counts furniture placed in your house and its storeroom. Hover it to
-  see each house. A green number means you have enough, and a `-` means it
-  doesn't know yet.
+  your retainers hold, market listings included, and hovering it shows which
+  retainer. **House** counts furniture placed in your house and its storeroom,
+  and hovering it shows each house. A green number means you have enough. A `-`
+  means it doesn't know yet.
 - **Vendor** shows when an NPC sells the item, for gil or a currency. Hover it
-  for the vendor and where they stand. An item no vendor sells says
-  **Craftable** if it can be crafted, and a craftable item with a vendor gets
-  (craftable) after the vendor. A known monster drop adds "monster drop", as in
-  **Craftable, monster drop**. Hover it for a pointer to the Monster Loot Hunter
-  plugin, which can tell you which monsters.
+  for the vendor and where they stand.
+- An item no vendor sells says **Craftable** if it can be crafted. A craftable
+  item that does have a vendor gets (craftable) after the vendor.
+- A known monster drop adds "monster drop", as in **Craftable, monster drop**.
+  Hover it for a pointer to the Monster Loot Hunter plugin, which can tell you
+  which monsters.
 
 ## Plan the route
 
 - **Willing to pay extra** takes a percent or an amount of gil over the cheapest
-  total. It picks the plan with the fewest worlds within that. Click another
+  total, and picks the plan with the fewest worlds within that. Click another
   option in the list to use it, or **Reset to cheapest** to go back.
 - The item list on the left follows the route, first world first. Items start
   collapsed, so open one to see every world selling it. Untick **Show item
   list** to give the route the whole window.
 - The market board only sells whole stacks, so every plan buys whole stacks. A
   world's line reads like `buy 2 stacks (20 + 99), 119 units`. Buying more than
-  you need is sometimes the cheapest plan, and an item then shows `surplus 19`.
+  you need is sometimes the cheapest plan, and the item then shows `surplus 19`.
   If the market doesn't have enough, it shows `short by N`.
 - The small **-** and **+** buttons in the **Buy here** box step through the
   amounts you can really buy. A number you type rounds up to the next one. The
   totals follow, and the header says the plan was edited by hand.
-- The **Route** panel lists each world and what to buy there. When you shop on
+- The **Route** panel lists each world and what to buy there. If you shop on
   more than one data center, the worlds sit under a heading for each, with its
   gil subtotal. Click an item name to copy it for the market board search.
 - Click a world name, in the route or in an open item, to ask Lifestream to take
@@ -158,33 +160,33 @@ The columns:
 
 ## What it won't do
 
-It only takes what you own off the bill if you tick Buy only what I lack.
-Without it, Find prices prices the full quantity, so untick what you don't need.
-With it, your house still isn't counted, and an item whose count isn't known
-yet is bought in full.
+What you own only comes off the bill if you tick Buy only what I lack. Without
+it, Find prices asks for the full quantity of every ticked row, so untick what
+you don't need. With it, your house still isn't counted, and an item whose count
+isn't known yet is bought in full.
 
-It only sees a retainer or the saddlebag while it's open, so it remembers what
-they held last time, per character. Open each retainer once. Equipped and
-armoury items aren't counted.
+Retainers and the saddlebag can only be read while they're open, so the plugin
+remembers what they held last time, per character. Open each retainer once.
+Equipped and armoury items aren't counted. Your house works the same way. It's
+read only while the Furnishings window is open and you're inside, so open
+Furnishings once in each house. The yard and the outdoor storeroom aren't
+counted.
 
-It only reads your house while the Furnishings window is open and you're inside
-the house. Open Furnishings once in each house. The yard and the outdoor
-storeroom aren't counted.
+The monster drop labels come from a list Teamcraft keeps, about 237 drops,
+because the game's own data has none. Plenty of real drops show nothing, so a
+blank doesn't mean the item isn't a drop.
 
-It knows about 237 monster drops, from a list Teamcraft keeps, because the
-game's own data has none. Plenty of real drops show nothing, so a blank doesn't
-mean the item isn't a drop.
+Vendors aren't checked for access. Some need a quest or a rank first. A few
+can't be matched to an NPC, so they don't show.
 
-It doesn't check whether you can buy from a vendor. Some need a quest or a rank
-first. A few vendors can't be matched to an NPC, so they don't show.
+Plans come from a fast search and aren't proven to be the cheapest. On a very
+large list the search stops after a fixed amount of work and shows the best
+plans it found by then.
 
-Its plans come from a fast search. They're good, but nobody has proven them the
-cheapest. On a very large list the search stops after a fixed amount of work and
-shows the best plans it found by then.
+Prices use the cheapest listing of either quality, and it doesn't show which is
+HQ.
 
-It prices the cheapest listing of either quality and doesn't show which is HQ.
-
-It works on the global client only. The China and Korea clients use different
+Only the global client is supported. The China and Korea clients use different
 data, and it hasn't been tried on them.
 
 ## Why the numbers can be a little off
@@ -195,13 +197,14 @@ the time you get there. Prices leave out market tax.
 ## What you need
 
 - Final Fantasy XIV on the global client, with Dalamud (API level 15).
-- Artisan, to open Artisan lists. My shopping lists and Import work without it.
+- Artisan, to open Artisan lists. My shopping lists and Import / Export work
+  without it.
 - Lifestream, only for clickable world names.
-- Allagan Tools, to open its craft lists. It's also optional for counts: when
-  it's installed, Retainers shows the higher of its count and the plugin's own.
+- Allagan Tools, to open its craft lists. If it's installed, Retainers also
+  shows the higher of its count and the plugin's own.
 - An internet connection. Prices come from Universalis. When the plugin starts
   it also downloads the monster drop list from Teamcraft's public repository on
-  GitHub. That request sends nothing about you. It keeps a copy in the plugin's
+  GitHub. That request sends nothing about you. The plugin keeps a copy in its
   config folder and uses it if the next download fails 3 times. With no copy,
   you get no drop labels that session.
 
@@ -216,20 +219,22 @@ turns "it broke" into something I can chase down.
 ## Licence and credits
 
 Luna Shopping List is free software under the GNU Affero General Public License
-version 3, which you'll find in the `LICENSE` file. Copyright 2026 LunaBelleElite.
+version 3, which you'll find in the `LICENSE` file. Copyright 2026
+LunaBelleElite.
 
 Prices come from [Universalis](https://universalis.app), a community-run market
 board service. Thanks to the people who keep it running. The monster drop list
-comes from Teamcraft's open repository. Thanks to its authors for sharing it.
+comes from Teamcraft's open repository, and thanks to its authors for sharing it.
 
-It also works with Artisan and Allagan Tools. It opens their crafting lists and
-writes lists to them, so thanks to the authors of both, including PunishXIV for
-[Artisan](https://github.com/PunishXIV/Artisan). It doesn't copy their code. It
-talks to Artisan through its plugin interface and list format, and to Allagan
-Tools through its public plugin interface.
+Thanks to the authors of Artisan and Allagan Tools, including PunishXIV for
+[Artisan](https://github.com/PunishXIV/Artisan). It gets Artisan's list names
+through Artisan's plugin interface and reads the contents from Artisan's saved
+config file. For export, it copies list text to your clipboard for you to import
+into Artisan. With Allagan Tools it reads your craft lists and makes new ones
+through Allagan Tools' plugin interface.
 
 Teamcraft, Artisan and Allagan Tools are separate projects, and this isn't
-affiliated with any of them. It isn't affiliated with or endorsed by Square Enix. Final Fantasy is a
-trademark of Square Enix.
+affiliated with any of them. It isn't affiliated with or endorsed by Square Enix
+either. Final Fantasy is a trademark of Square Enix.
 
 It started from the SamplePlugin template the Dalamud authors publish.

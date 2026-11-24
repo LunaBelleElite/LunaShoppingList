@@ -2,44 +2,45 @@
 
 ## 0.17.0.1 - 2026-11-24
 
-- Big lists on busy items are now solved exactly more often, so the (estimate) tag shows up less. Prices that were already exact don't change.
+- Big lists on busy items are solved exactly more often, so you see (estimate) less. Exact prices don't change.
 
 ## 0.17.0.0 - 2026-11-24
 
-- New Allagan Tools lists tab in the list browser. Open one of your Allagan Tools craft lists and it works out the materials, subcrafts included. If Allagan Tools isn't loaded, the tab says so.
-- New Send to Allagan Tools button in Import / Export. It makes a new craft list from one of your lists. Allagan Tools can't delete lists over its API, so sending twice makes two, and high quality isn't kept.
-- Untick crafted items when a list opens and Ignore listings older than (hours) now sit above the tabs, so you can reach them from any tab.
-- When Buy only what I lack leaves nothing to buy, the old results window closes instead of staying open.
+- New Allagan Tools lists tab. Open a craft list and it works out the materials, subcrafts included.
+- New Send to Allagan Tools button makes a craft list from one of yours. Sending twice makes two, and high quality isn't kept.
+- Untick crafted items when a list opens and Ignore listings older than (hours) now sit above the tabs.
+- The old results window closes when Buy only what I lack leaves nothing to buy.
 
 ## 0.16.0.0 - 2026-11-24
 
-- Plans and prices now assume you buy whole stacks, because the market board won't sell part of one. Totals can be higher than before and can include extra units.
-- The Buy here box has small - and + buttons that step through amounts you can really buy. A number you type rounds up to the next one.
-- Results show things like buy 2 stacks (20 + 99), 119 units, with surplus N when you end up with extra and short by N when the market doesn't have enough.
-- Willing to pay extra plans use whole stacks too. On very large lists the search stops after a while and shows the best plans it found.
+- Plans and prices now assume whole stacks, because the market board won't sell part of one. Totals can run higher.
+- Buy here has - and + buttons that step through amounts you can really buy. A typed number rounds up.
+- Results say things like buy 2 stacks (20 + 99), 119 units, with surplus N and short by N where they apply.
+- Willing to pay extra plans use whole stacks too. On very large lists the search stops early and shows the best plans so far.
 
 ## 0.15.0.0 - 2026-11-24
 
-- New Buy only what I lack box next to Find prices. Ticked, it prices only what your bags, saddlebag and retainers don't already cover.
-- Listings older than 24 hours are now ignored. This is on by default, and you can turn it off by setting Ignore listings older than (hours) to 0 in the list browser.
+- New Buy only what I lack box next to Find prices. It prices only what your bags, saddlebag and retainers don't cover.
+- Listings over 24 hours old are ignored. Set Ignore listings older than (hours) to 0 to turn that off.
 - The Route is grouped by data center, with a gil subtotal for each.
 - The monster drop list is kept on your computer and used if the download fails.
 
 ## 0.14.1.0 - 2026-11-23
 
-- Buttons say what they do now. Build shopping list is Find prices, the Exclude buttons say Untick, and Check/uncheck all is Tick all.
-- New Undo button. It takes back the last Tick or Untick button.
-- Hover a greyed-out button to see why it's greyed out.
-- Fixed: recipe data no longer retries forever after a failure, and changing ticks while prices load no longer shows old results.
+- Buttons now say what they do. Build shopping list is Find prices, Exclude is Untick, and Check/uncheck all is Tick all.
+- New Undo button takes back the last Tick or Untick button.
+- Hover a greyed-out button to see why.
+- Fixed: recipe data no longer retries forever after a failure.
+- Fixed: changing ticks while prices load no longer shows old results.
 
 ## 0.14.0.0 - 2026-11-23
 
-- The Vendor column now marks known monster drops. Hover it for a pointer to the Monster Loot Hunter plugin.
-- The drop list is downloaded from Teamcraft's public repository when the plugin starts.
+- The Vendor column marks known monster drops, with a pointer to the Monster Loot Hunter plugin.
+- The drop list downloads from Teamcraft's public repository when the plugin starts.
 
 ## 0.13.0.0 - 2026-11-23
 
-- New House column. It counts furniture in your house and storeroom once you open the Furnishings window there.
+- New House column counts furniture in your house and storeroom once you open Furnishings there.
 - New Exclude items in my house button.
 - Click a world name to ask Lifestream to take you there.
 - Removed the crystals toggle.
@@ -60,19 +61,20 @@
 
 - Item search matches your words in any order.
 - Exports only send craftable items and tell you what was left out.
-- Items that can't be sold on the market board are marked instead of looking like a failed lookup.
-- Fixed: a quantity could save to the wrong list, and some Artisan lists failed to load.
+- Items that can't be sold on the market board are marked, not shown as a failed lookup.
+- Fixed: a quantity could save to the wrong list.
+- Fixed: some Artisan lists failed to load.
 
 ## 0.10.0.1 - 2026-11-22
 
 - The Paste tab is now Import / Export. It reads Teamcraft links, Artisan exports and plain item lines, and exports to both.
-- Add with subcrafts keeps the finished item as a goal and works out the materials for all goals together.
-- New Exclude crafted items checkbox, and a Check/uncheck all button.
+- Add with subcrafts keeps the finished item as a goal and works out materials for all goals together.
+- New Exclude crafted items checkbox and a Check/uncheck all button.
 - Fixed: pasting a big block of text could freeze the game.
 
 ## 0.8.0.0 - 2026-11-22
 
-- New Add with subcrafts button. It breaks an item down to its raw materials.
+- New Add with subcrafts button breaks an item down to raw materials.
 - Removed the per-row Add ingredients button.
 
 ## 0.7.0.0 - 2026-11-22
@@ -92,4 +94,4 @@
 
 - First public release.
 - `/lsl` opens your Artisan lists, Build checks Universalis, and a results window shows which world to buy each item on.
-- Install it by adding this repository in Dalamud. The README has the steps.
+- Add this repository in Dalamud to install it. The README has the steps.
