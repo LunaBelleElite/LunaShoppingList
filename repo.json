@@ -3,7 +3,7 @@
     "Author": "LunaBelleElite",
     "Name": "Luna Shopping List",
     "InternalName": "LunaShoppingList",
-    "AssemblyVersion": "0.17.0.1",
+    "AssemblyVersion": "0.17.0.2",
     "Description": "Builds a price-optimised shopping list, grouped by world, from an Artisan crafting list using current Universalis prices.",
     "Punchline": "Builds a price-optimised shopping list from an Artisan crafting list.",
     "Tags": [
@@ -21,10 +21,10 @@
     "IsHide": false,
     "IsTestingExclusive": false,
     "DownloadCount": 0,
-    "LastUpdate": 1795546191,
-    "Changelog": "- Big lists on busy items are solved exactly more often, so you see (estimate) less. Exact prices don't change.",
-    "DownloadLinkInstall": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.17.0.1/latest.zip",
-    "DownloadLinkUpdate": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.17.0.1/latest.zip",
-    "DownloadLinkTesting": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.17.0.1/latest.zip"
+    "LastUpdate": 1795570622,
+    "Changelog": "- Help text, tooltips and messages in the plugin are reworded to be shorter and clearer.\n- Nothing else changed.",
+    "DownloadLinkInstall": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.17.0.2/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.17.0.2/latest.zip",
+    "DownloadLinkTesting": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.17.0.2/latest.zip"
   }
 ]
