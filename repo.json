@@ -3,9 +3,9 @@
     "Author": "LunaBelleElite",
     "Name": "Luna Shopping List",
     "InternalName": "LunaShoppingList",
-    "AssemblyVersion": "0.18.0.0",
-    "Description": "Builds a price-optimised shopping list, grouped by world, from an Artisan crafting list using current Universalis prices.",
-    "Punchline": "Builds a price-optimised shopping list from an Artisan crafting list.",
+    "AssemblyVersion": "0.18.0.1",
+    "Description": "Open an Artisan or Allagan Tools crafting list, or one you made in the plugin, and it asks Universalis for current prices. It shows where to buy each item and suggests the plan with the fewest worlds for what you're willing to spend.",
+    "Punchline": "Turns a crafting list into a shopping list that says which world to buy each thing on.",
     "Tags": [
       "crafting",
       "artisan",
@@ -21,10 +21,10 @@
     "IsHide": false,
     "IsTestingExclusive": false,
     "DownloadCount": 0,
-    "LastUpdate": 1795608365,
-    "Changelog": "- Plan options on big All data centers lists are now worked out exactly, so the extra gil for each world count is the cheapest it can prove.\n- On a very large list that can take up to about 30 seconds. The build says \"Working out the cheapest plans...\" while it runs, and Cancel build now stops it.\n- If the search runs out of time it shows the best plans it found, with the few-worlds end checked first.\n- The line saying plans aren't proven to be the cheapest is gone.",
-    "DownloadLinkInstall": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.18.0.0/latest.zip",
-    "DownloadLinkUpdate": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.18.0.0/latest.zip",
-    "DownloadLinkTesting": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.18.0.0/latest.zip"
+    "LastUpdate": 1795613319,
+    "Changelog": "- The plugin description shown in the Dalamud plugin list now says what it does today, including Allagan Tools lists.",
+    "DownloadLinkInstall": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.18.0.1/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.18.0.1/latest.zip",
+    "DownloadLinkTesting": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.18.0.1/latest.zip"
   }
 ]
