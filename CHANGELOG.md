@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.17.0.2 - 2026-11-24
+
+- Help text, tooltips and messages in the plugin are reworded to be shorter and clearer.
+- Nothing else changed.
+
 ## 0.17.0.1 - 2026-11-24
 
 - Big lists on busy items are solved exactly more often, so you see (estimate) less. Exact prices don't change.

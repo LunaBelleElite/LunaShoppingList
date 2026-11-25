@@ -10,11 +10,11 @@ namespace LunaShoppingList.Windows;
 /// <summary>One window per shopping list: ingredients, scope and Build. Pressing Build opens that list's results window.</summary>
 public sealed class ListWindow : Window, IDisposable
 {
-    private const string UnreadableConfigText = "Couldn't read Artisan's config, try again in a moment.";
+    private const string UnreadableConfigText = "Could not read Artisan's config. Try again in a moment.";
     private const string NotStoredText = "This list is not stored in Artisan's config (premade/relic lists cannot be read). Use the Import / Export tab instead.";
     private const string CustomListGoneText = "This shopping list no longer exists.";
-    private const string CraftedPendingText = "Crafted items will be unticked by themselves once recipe data has loaded.";
-    private const string GoalsPendingText = "Materials for the goals are not loaded yet. They will appear by themselves once recipe data has loaded.";
+    private const string CraftedPendingText = "Crafted items will be unticked once recipe data has loaded.";
+    private const string GoalsPendingText = "Goal materials aren't loaded yet. They'll appear once recipe data has loaded.";
     private const string RecipesFailedText = "Recipe data could not be loaded. Check /xllog, then try again.";
     private const string GoalsPendingBuildTooltip = "Waiting for recipe data. The goals' materials are not loaded yet.";
     private const string FootnoteText = "Prices are from Universalis, exclude market tax, and may be out of date. This plugin never travels on its own. A click on a world name only asks Lifestream to go there.";
@@ -510,12 +510,12 @@ public sealed class ListWindow : Window, IDisposable
             PersistExclusions();
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Unticks every ingredient where what you hold (bags, saddlebag, retainers) already covers the quantity needed, including items you ticked by hand.\nRetainer counts are as of your last visit to each retainer. Items you have not got enough of stay as they are.");
+            ImGui.SetTooltip("Unticks every ingredient your bags, saddlebag and retainers already cover, including ones you ticked by hand.\nRetainer counts are from your last visit to each retainer.");
         SameLineIfFits("Untick crafted items");
         if (ImGui.Button("Untick crafted items"))
             ExcludeCraftedNow();
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Unticks every ingredient that can be crafted, so only the raw materials are left to buy, including items you ticked by hand.\nCrystals, shards and clusters are not touched.");
+            ImGui.SetTooltip("Unticks everything that can be crafted, including items you ticked by hand, so only raw materials are left.\nCrystals, shards and clusters are not touched.");
         SameLineIfFits("Untick items in my house");
         if (ImGui.Button("Untick items in my house"))
         {
@@ -524,7 +524,7 @@ public sealed class ListWindow : Window, IDisposable
             PersistExclusions();
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Unticks every ingredient that is already in your house (placed or in the storeroom) in the quantity needed, including items you ticked by hand.\nOpen the Furnishings window once in each house first.\nHouse items are not counted by Untick items I have enough of.");
+            ImGui.SetTooltip("Unticks every ingredient your house already covers (placed or in the storeroom), including ones you ticked by hand.\nOpen the Furnishings window once in each house first.\nUntick items I have enough of doesn't count your house.");
         SameLineIfFits("Undo");
         ImGui.BeginDisabled(!session.CanUndo);
         try
@@ -798,7 +798,7 @@ public sealed class ListWindow : Window, IDisposable
             // Read the failure first: RetryNow clears it, and this press is the user's explicit retry.
             var failed = data.IsResultIndexFailed;
             data.RetryNow();
-            craftedButtonNote = failed ? RecipesFailedText + " Trying again, press the button again in a moment." : "Recipe data is still loading. Press the button again in a moment.";
+            craftedButtonNote = failed ? RecipesFailedText + " Trying again. Press the button again in a moment." : "Recipe data is still loading. Press the button again in a moment.";
             return;
         }
         craftedButtonNote = string.Empty;
@@ -834,7 +834,7 @@ public sealed class ListWindow : Window, IDisposable
             if (s.Saddlebag is int bag)
                 ImGui.TextUnformatted($"Saddlebag: {bag:N0} (as of {LocalTime(s.SaddlebagCapturedUtc)})");
             else
-                ImGui.TextDisabled("Saddlebag: not seen yet; open it once to count it.");
+                ImGui.TextDisabled("Saddlebag: not seen yet. Open it once to count it.");
             ImGui.TextUnformatted($"Needed: {needed:N0}");
         }
         finally
@@ -870,18 +870,18 @@ public sealed class ListWindow : Window, IDisposable
         {
             ImGui.TextUnformatted(s.RetainerSource switch
             {
-                RetainerSource.External => "Shown: AllaganTools",
+                RetainerSource.External => "Shown: Allagan Tools",
                 RetainerSource.Cache => "Shown: this plugin's record of your last retainer visits",
                 _ => "Unknown: no retainer has been opened yet",
             });
             if (s.RetainersCached is long cached)
                 ImGui.TextUnformatted($"This plugin's record: {cached:N0}, as of {LocalTime(s.RetainersCapturedOldestUtc)} to {LocalTime(s.RetainersCapturedNewestUtc)}");
             else
-                ImGui.TextDisabled("This plugin's record: none yet; open each retainer once.");
+                ImGui.TextDisabled("This plugin's record: none yet. Open each retainer once.");
             if (s.RetainersExternal is long ext)
-                ImGui.TextUnformatted($"AllaganTools: {ext:N0}");
+                ImGui.TextUnformatted($"Allagan Tools: {ext:N0}");
             else
-                ImGui.TextDisabled("AllaganTools: not available");
+                ImGui.TextDisabled("Allagan Tools: not available");
             ImGui.TextDisabled("Counts retainer inventory, crystals and market listings.");
             if (s.Retainers is long r && OnYouTotal(s) is long onYou)
                 ImGui.TextUnformatted($"With what is on you: {onYou + r:N0} of {needed:N0} needed");
@@ -1002,7 +1002,7 @@ public sealed class ListWindow : Window, IDisposable
         ImGui.BeginTooltip();
         try
         {
-            ImGui.TextUnformatted($"{Name(itemId)} can also be had from vendors");
+            ImGui.TextUnformatted($"{Name(itemId)} can also be bought from vendors");
             foreach (var s in shown)
                 ImGui.TextUnformatted(ItemSourceSummary.Line(s));
             if (more > 0)
@@ -1023,7 +1023,7 @@ public sealed class ListWindow : Window, IDisposable
         ImGui.PushTextWrapPos(ImGui.GetFontSize() * 30f);
         try
         {
-            ImGui.TextWrapped($"{Name(itemId)} is a monster drop. This plugin does not know which monsters; the Monster Loot Hunter plugin can look it up.");
+            ImGui.TextWrapped($"{Name(itemId)} is a monster drop. This plugin doesn't know which monsters. The Monster Loot Hunter plugin can look it up.");
         }
         finally
         {
@@ -1041,7 +1041,7 @@ public sealed class ListWindow : Window, IDisposable
 
         ImGui.Separator();
         if (s.RetainerSource == RetainerSource.External)
-            ImGui.TextDisabled("AllaganTools does not say where an item is; the list below is this plugin's own record.");
+            ImGui.TextDisabled("Allagan Tools doesn't say where an item is, so this list is the plugin's own record.");
         ImGui.TextUnformatted("Where");
         foreach (var loc in where.Take(MaxLocationLines))
         {
@@ -1055,7 +1055,7 @@ public sealed class ListWindow : Window, IDisposable
             {
                 ImGui.TextUnformatted($"{name}: {loc.Total:N0}");
                 ImGui.SameLine();
-                ImGui.TextDisabled($"location not recorded yet, open this retainer once (as of {LocalTime(loc.CapturedUtc)})");
+                ImGui.TextDisabled($"location not recorded yet. Open this retainer once (as of {LocalTime(loc.CapturedUtc)})");
             }
         }
         if (where.Count > MaxLocationLines)

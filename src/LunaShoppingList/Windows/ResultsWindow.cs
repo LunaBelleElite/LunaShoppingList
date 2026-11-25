@@ -406,10 +406,10 @@ public sealed class ResultsWindow : Window
     private void DrawHeader()
     {
         if (refreshNotice)
-            ImGui.TextDisabled($"Prices were refreshed; the plan within +{budget:N0} gil was re-applied. Manual changes were reset.");
+            ImGui.TextDisabled($"Prices were refreshed and the plan within +{budget:N0} gil was re-applied. Manual changes were reset.");
 
         if (planOptions.Count == 0)
-            ImGui.TextDisabled("Trade-off options are not available for this list.");
+            ImGui.TextDisabled("Plan options aren't available for this list.");
         else
             DrawTradeOff();
 
@@ -498,7 +498,7 @@ public sealed class ResultsWindow : Window
             SetBudgetFromOption(planOptions[0]);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(ReplacesTypedText);
-        ImGui.TextDisabled("These are good plans found by a fast search, not proven to be the lowest possible.");
+        ImGui.TextDisabled("These plans come from a fast search and aren't proven to be the cheapest.");
         ImGui.TextDisabled("Your own quantity changes below still override the plan.");
     }
 
@@ -758,7 +758,7 @@ public sealed class ResultsWindow : Window
         {
             ImGui.TextDisabled(item.DroppedListings > 0 && context.MaxAgeHours > 0
                 ? $"No listings newer than {Plural.Of(context.MaxAgeHours, "hour")} ({item.DroppedListings:N0} hidden)"
-                : "No listings in your scope");
+                : "No listings in the worlds you chose");
             return;
         }
 

@@ -222,7 +222,7 @@ public class ShoppingListServiceTests
     {
         var c = new FakeClient { DataCenters = [new("Other", "R9", [200, 201])] };
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => Book(Svc(c), [new(1, 1)]));
-        Assert.Equal("Universalis does not list any world in the selected scope.", ex.Message);
+        Assert.Equal("Universalis doesn't list any of the worlds you chose.", ex.Message);
         Assert.Empty(c.Calls);
     }
 

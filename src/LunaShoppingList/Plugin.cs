@@ -72,7 +72,7 @@ public sealed class Plugin : IDalamudPlugin
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open the Luna Shopping List window; '/lsl dump' writes the diagnostic dump"
+            HelpMessage = "Opens Luna Shopping List. '/lsl dump' prints a diagnostic to chat and /xllog."
         });
 
         PluginInterface.UiBuilder.Draw += DrawUi;

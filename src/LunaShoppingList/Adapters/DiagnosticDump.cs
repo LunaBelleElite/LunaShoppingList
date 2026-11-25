@@ -85,7 +85,7 @@ public sealed class DiagnosticDump
         catch (Exception ex)
         {
             log.Error(ex, "LSL dump failed");
-            chat.Print("LSL dump failed, see /xllog");
+            chat.Print("LSL dump failed. See /xllog.");
         }
     }
 

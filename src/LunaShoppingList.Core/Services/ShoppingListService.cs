@@ -90,7 +90,7 @@ public sealed class ShoppingListService
         ArgumentNullException.ThrowIfNull(exclusions);
 
         var current = _worlds.CurrentWorld
-            ?? throw new InvalidOperationException("Current world unknown; log in to a character.");
+            ?? throw new InvalidOperationException("Current world unknown. Log in to a character.");
 
         var resolved = TravelScopeResolver.Resolve(scope, current, _worlds.AllWorlds);
         var allowedWorldIds = resolved.Worlds.Select(w => w.Id).ToHashSet();
@@ -117,7 +117,7 @@ public sealed class ShoppingListService
         allowedWorldIds.IntersectWith(universalisWorldIds);
         if (allowedWorldIds.Count == 0)
         {
-            throw new InvalidOperationException("Universalis does not list any world in the selected scope.");
+            throw new InvalidOperationException("Universalis doesn't list any of the worlds you chose.");
         }
         var scopes = dataCenters
             .Where(d => d.WorldIds.Any(allowedWorldIds.Contains))

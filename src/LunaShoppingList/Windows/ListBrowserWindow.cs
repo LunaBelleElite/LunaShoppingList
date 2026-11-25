@@ -11,7 +11,7 @@ namespace LunaShoppingList.Windows;
 public sealed class ListBrowserWindow : Window
 {
     private const string NoListsText = "Artisan not found or no lists";
-    private const string UnreadableConfigText = "Couldn't read Artisan's config, try again in a moment.";
+    private const string UnreadableConfigText = "Could not read Artisan's config. Try again in a moment.";
     private const string LoadingNamesText = "Loading item names...";
     private const string ImportHelpText = "Paste a Teamcraft import link, an Artisan list copied with Export List, or lines like 3x Iron Ore.";
     private const string BreakdownTooltip = "Replaces each craftable item with its raw materials. Items that cannot be crafted stay as they are.";
@@ -35,13 +35,13 @@ public sealed class ListBrowserWindow : Window
     private const int NearCapBytes = 8;
     private const int SearchMaxLength = 100;
     private const int SearchResultCount = 10;
-    private const string AddWithSubcraftsTooltip = "Keeps the finished item as a goal on this list and works out the materials down to raw materials, so the list can be exported to Artisan with its subcrafts. The item itself is not a shopping row. Where several recipes make an item, the first recipe found is used.";
+    private const string AddWithSubcraftsTooltip = "Keeps the item as a goal and adds the raw materials it needs, so the list can go to Artisan with its subcrafts. The item itself isn't a shopping row. Where several recipes make it, the first one is used.";
     private const string GoalsNoteText = "The materials for these goals are added to the shopping list automatically.";
     private const string RecipesLoadingText = "Recipe data is still loading...";
     private const string RecipesFailedText = "Recipe data could not be loaded. Check /xllog, then try again.";
-    private const string TeamcraftLinkHintText = "Copy Teamcraft link copies a link to send to someone else. They should open it as a website (paste it into the browser's address bar), not try to import it in Teamcraft's import dialog.";
-    private const string ShareTeamcraftTooltip = "Copies the Teamcraft link so you can send it to another person. They open it as a website; it does not work in Teamcraft's own import dialog. To use it yourself, press Open in Teamcraft instead.";
-    private const string ExcludeCraftedTooltip = "When a list opens, ingredients that can be crafted start unticked, on top of your saved ticks. Crystals, shards and clusters are never touched.";
+    private const string TeamcraftLinkHintText = "Copy Teamcraft link is for sending to someone else. They paste it into a browser's address bar. It won't work in Teamcraft's import dialog.";
+    private const string ShareTeamcraftTooltip = "Copies a link you can send to someone. They open it in a browser. It won't work in Teamcraft's own import dialog. To use it yourself, press Open in Teamcraft.";
+    private const string ExcludeCraftedTooltip = "When a list opens, craftable ingredients start unticked. Your saved ticks still apply. Crystals, shards and clusters are never touched.";
     private const string NotCraftableText = "This item cannot be crafted";
     private const string AllaganMissingText = "Allagan Tools isn't loaded, or hasn't finished starting. Install it, or wait a moment and press Refresh lists.";
     private const string AllaganNoListsText = "Allagan Tools has no craft lists yet. Make one there, then press Refresh lists.";
@@ -358,7 +358,7 @@ public sealed class ListBrowserWindow : Window
         if (lists.Count == 0)
         {
             ImGui.TextWrapped(hiddenCount > 0
-                ? $"Artisan has no saved lists of yours. {Plural.Of(hiddenCount, "list")} {(hiddenCount == 1 ? "is" : "are")} hidden (not in Artisan's saved config); to use a premade list, paste its ingredients."
+                ? $"Artisan has no saved lists of yours. {Plural.Of(hiddenCount, "list")} {(hiddenCount == 1 ? "is" : "are")} hidden because they aren't in Artisan's saved config. To use a premade list, paste its ingredients."
                 : NoListsText);
         }
         else
@@ -396,7 +396,7 @@ public sealed class ListBrowserWindow : Window
             ImGui.PushTextWrapPos(0f);
             try
             {
-                ImGui.TextDisabled($"{Plural.Of(hiddenCount, "list")} {(hiddenCount == 1 ? "is" : "are")} hidden: lists that are not in Artisan's saved config (premade lists, or lists not saved yet). To use {(hiddenCount == 1 ? "it" : "one")}, paste its ingredients.");
+                ImGui.TextDisabled($"{Plural.Of(hiddenCount, "list")} {(hiddenCount == 1 ? "is" : "are")} hidden because they're not in Artisan's saved config (premade lists, or lists not saved yet). To use {(hiddenCount == 1 ? "it" : "one")}, paste its ingredients.");
             }
             finally
             {
@@ -435,7 +435,7 @@ public sealed class ListBrowserWindow : Window
         if (ImGui.IsItemDeactivatedAfterEdit())
             config.Save();
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Set 0 to turn this off.");
+            ImGui.SetTooltip("Listings older than this are skipped when pricing. Set 0 to turn this off.");
     }
 
     private void RefreshLists()
@@ -601,7 +601,7 @@ public sealed class ListBrowserWindow : Window
             else
             {
                 data.WarmUp();
-                craftWarn = RecipesLoadingText + (forSave ? " Press it again in a moment." : " Click the list again in a moment.");
+                craftWarn = RecipesLoadingText + (forSave ? " Press the button again in a moment." : " Click the list again in a moment.");
             }
             return null;
         }
