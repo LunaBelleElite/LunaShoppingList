@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.0.1 - 2026-11-25
+
+- The plugin description shown in the Dalamud plugin list now says what it does today, including Allagan Tools lists.
+
 ## 0.18.0.0 - 2026-11-24
 
 - Plan options on big All data centers lists are now worked out exactly, so the extra gil for each world count is the cheapest it can prove.

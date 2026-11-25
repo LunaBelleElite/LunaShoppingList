@@ -4,8 +4,8 @@
     <!-- Manifest fields (see https://github.com/goatcorp/DalamudPackager/blob/827d88dc/DalamudPackager/DalamudPackager.cs#L420) -->
     <Author>LunaBelleElite</Author>
     <Name>Luna Shopping List</Name>
-    <Punchline>Builds a price-optimised shopping list from an Artisan crafting list.</Punchline>
-    <Description>Builds a price-optimised shopping list, grouped by world, from an Artisan crafting list using current Universalis prices.</Description>
+    <Punchline>Turns a crafting list into a shopping list that says which world to buy each thing on.</Punchline>
+    <Description>Open an Artisan or Allagan Tools crafting list, or one you made in the plugin, and it asks Universalis for current prices. It shows where to buy each item and suggests the plan with the fewest worlds for what you're willing to spend.</Description>
     <RepoUrl>https://github.com/LunaBelleElite/LunaShoppingList</RepoUrl>
     <Tags>crafting;artisan;shopping;market;universalis</Tags>
     <RootNamespace>LunaShoppingList</RootNamespace>
