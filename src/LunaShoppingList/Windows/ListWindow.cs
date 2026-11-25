@@ -1226,7 +1226,8 @@ public sealed class ListWindow : Window, IDisposable
                 IReadOnlyList<PlanOption> options;
                 try
                 {
-                    options = PlanFrontier.Build(result);
+                    progress.Report("Working out the cheapest plans...");
+                    options = PlanFrontier.BuildDetailed(result, PlanFrontier.DefaultWorkBudget, PlanFrontier.DefaultExactWorkBudget, token).Options;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {

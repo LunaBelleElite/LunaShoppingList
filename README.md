@@ -179,9 +179,9 @@ blank doesn't mean the item isn't a drop.
 Vendors aren't checked for access. Some need a quest or a rank first. A few
 can't be matched to an NPC, so they don't show.
 
-Plans come from a fast search and aren't proven to be the cheapest. On a very
-large list the search stops after a fixed amount of work and shows the best
-plans it found by then.
+It works out the plans exactly. On a very large All data centers list that can
+take about 30 seconds. If it isn't done by then it stops and shows the best
+plans it found so far.
 
 Prices use the cheapest listing of either quality, and it doesn't show which is
 HQ.

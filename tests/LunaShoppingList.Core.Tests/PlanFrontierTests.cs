@@ -934,7 +934,9 @@ public class PlanFrontierTests
         var book = Book(items.ToArray());
 
         var sw = Stopwatch.StartNew();
-        var detailed = PlanFrontier.BuildDetailed(book);
+        // 2026-11-24: the default exact budget (14e9 units, about 30 s) now applies to a book this size, so the test passes a smaller
+        // exact budget (2e9, about 5 s) to keep the 20 s bound meaningful. The default's own bound is the 30 s the user asked for.
+        var detailed = PlanFrontier.BuildDetailed(book, PlanFrontier.DefaultWorkBudget, 2_000_000_000L, CancellationToken.None);
         sw.Stop();
         var options = detailed.Options;
 

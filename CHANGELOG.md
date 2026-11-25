@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.0.0 - 2026-11-24
+
+- Plan options on big All data centers lists are now worked out exactly, so the extra gil for each world count is the cheapest it can prove.
+- On a very large list that can take up to about 30 seconds. The build says "Working out the cheapest plans..." while it runs, and Cancel build now stops it.
+- If the search runs out of time it shows the best plans it found, with the few-worlds end checked first.
+- The line saying plans aren't proven to be the cheapest is gone.
+
 ## 0.17.0.2 - 2026-11-24
 
 - Help text, tooltips and messages in the plugin are reworded to be shorter and clearer.

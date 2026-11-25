@@ -28,7 +28,7 @@ namespace LunaShoppingList.Core;
 /// when its share of the budget is spent (<see cref="Phase"/>); <see cref="Cut"/> then says so.
 /// </para>
 /// </remarks>
-internal sealed class FrontierSearch
+internal sealed partial class FrontierSearch
 {
     /// <summary>A complete plan: its exact whole-stack total, the worlds it visits, and its lines (item id, then world id).</summary>
     internal readonly record struct Candidate(long Total, int Worlds, IReadOnlyList<AllocationLine> Lines);
@@ -42,13 +42,16 @@ internal sealed class FrontierSearch
     private readonly List<int>[] _itemsByWorld;
     private readonly long _budget;
     private long _work;
+    private readonly CancellationToken _cancellation;
 
     /// <summary>True once a phase stopped early because the work budget was spent.</summary>
     public bool Cut { get; private set; }
 
-    public FrontierSearch(OfferBook book, long budget)
+    /// <summary>Builds the search over <paramref name="book"/> with a work budget of <paramref name="budget"/>; <paramref name="cancellation"/> is checked by every <see cref="Continue"/>, which throws <see cref="OperationCanceledException"/> once it is cancelled, so a cancelled search never hands back partial results.</summary>
+    public FrontierSearch(OfferBook book, long budget, CancellationToken cancellation = default)
     {
         _budget = budget;
+        _cancellation = cancellation;
         var raw = new List<(ItemOffers Item, List<WorldOffer> Offers, long Supply)>();
         foreach (var item in book.Items.Where(i => i.Needed > 0 && i.Worlds is { Count: > 0 }).GroupBy(i => i.ItemId).Select(g => g.First()).OrderBy(i => i.ItemId))
         {
@@ -116,9 +119,10 @@ internal sealed class FrontierSearch
 
     private static bool IsStack(PriceStep s) => s.Quantity > 0 && s.UnitPrice > 0;
 
-    /// <summary>Spends nothing; true while budget is left, otherwise records that the search was cut and returns false.</summary>
+    /// <summary>Spends nothing; true while budget is left, otherwise records that the search was cut and returns false. Throws <see cref="OperationCanceledException"/> when the token given to the constructor is cancelled.</summary>
     public bool Continue()
     {
+        _cancellation.ThrowIfCancellationRequested();
         if (_work < _limit)
             return true;
         Cut = true;
@@ -127,11 +131,17 @@ internal sealed class FrontierSearch
 
     private long _limit;
 
+    /// <summary>Work the exact phase spent from its own budget (see <see cref="ExactFrontier"/>); later <see cref="Phase"/> limits start above it, so that work is not charged to the heuristic budget.</summary>
+    private long _exactSpent;
+
     /// <summary>
     /// Starts a phase that may run until <paramref name="percent"/> of the whole budget has been spent (counting what earlier phases
     /// spent), so one expensive phase cannot starve the ones after it.
     /// </summary>
-    public void Phase(int percent) => _limit = percent >= 100 ? _budget : _budget / 100 * percent;
+    public void Phase(int percent) => _limit = _exactSpent + (percent >= 100 ? _budget : _budget / 100 * percent);
+
+    /// <summary>Starts a phase that may run until the counted work reaches <paramref name="units"/> in total, whatever the constructor budget is: a phase with a budget of its own.</summary>
+    public void PhaseAbsolute(long units) => _limit = units;
 
     /// <summary>Fixed work charged per exact solve on top of its stacks and table cells: allocation and setup, measured to cost about as much as a thousand cells.</summary>
     private const long SolveOverhead = 1_000;

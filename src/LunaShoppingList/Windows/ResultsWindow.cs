@@ -498,7 +498,6 @@ public sealed class ResultsWindow : Window
             SetBudgetFromOption(planOptions[0]);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(ReplacesTypedText);
-        ImGui.TextDisabled("These plans come from a fast search and aren't proven to be the cheapest.");
         ImGui.TextDisabled("Your own quantity changes below still override the plan.");
     }
 
