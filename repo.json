@@ -3,7 +3,7 @@
     "Author": "LunaBelleElite",
     "Name": "Luna Shopping List",
     "InternalName": "LunaShoppingList",
-    "AssemblyVersion": "0.18.0.1",
+    "AssemblyVersion": "0.18.1.0",
     "Description": "Open an Artisan or Allagan Tools crafting list, or one you made in the plugin, and it asks Universalis for current prices. It shows where to buy each item and suggests the plan with the fewest worlds for what you're willing to spend.",
     "Punchline": "Turns a crafting list into a shopping list that says which world to buy each thing on.",
     "Tags": [
@@ -21,10 +21,10 @@
     "IsHide": false,
     "IsTestingExclusive": false,
     "DownloadCount": 0,
-    "LastUpdate": 1795613319,
-    "Changelog": "- The plugin description shown in the Dalamud plugin list now says what it does today, including Allagan Tools lists.",
-    "DownloadLinkInstall": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.18.0.1/latest.zip",
-    "DownloadLinkUpdate": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.18.0.1/latest.zip",
-    "DownloadLinkTesting": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.18.0.1/latest.zip"
+    "LastUpdate": 1795792356,
+    "Changelog": "- All data centers now means your own region plus Materia. It no longer offers worlds in other regions, which the game won't let you travel to.\n- This applies on every region, so Europe and Japan get their own region plus Materia too.",
+    "DownloadLinkInstall": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.18.1.0/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.18.1.0/latest.zip",
+    "DownloadLinkTesting": "https://github.com/LunaBelleElite/LunaShoppingList/releases/download/ver-0.18.1.0/latest.zip"
   }
 ]
