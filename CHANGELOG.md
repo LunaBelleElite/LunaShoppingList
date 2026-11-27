@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.18.1.0 - 2026-11-27
+
+- All data centers now means your own region plus Materia. It no longer offers worlds in other regions, which the game won't let you travel to.
+- This applies on every region, so Europe and Japan get their own region plus Materia too.
+
 ## 0.18.0.1 - 2026-11-25
 
 - The plugin description shown in the Dalamud plugin list now says what it does today, including Allagan Tools lists.

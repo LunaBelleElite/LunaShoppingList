@@ -84,7 +84,8 @@ public class ShoppingListServiceTests
     // (Uni1, Uni2, Uni3) and DataCentersAreFetchedOncePerBuild (one data-center fetch).
     [Theory]
     [InlineData(TravelScopeKind.CrossWorld, new[] { "Uni1", "Uni2" })]
-    [InlineData(TravelScopeKind.CrossDataCenter, new[] { "Uni1", "Uni2", "Uni3" })]
+    // 2026-11-27: All data centers is now the same region plus Oceania, so the R2 data center (Uni3) is no longer fetched.
+    [InlineData(TravelScopeKind.CrossDataCenter, new[] { "Uni1", "Uni2" })]
     public async Task OfferBook_CallsOncePerUniversalisDataCenterInNameOrder_WithNonExcludedIdsInOrder(TravelScopeKind kind, string[] scopes)
     {
         var ex = new ExclusionState();

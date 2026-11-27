@@ -4,6 +4,6 @@
     <!-- Single source of truth for the plugin build version (the Dalamud manifest's
          AssemblyVersion and repo.json must equal it). Keep equal to the top
          CHANGELOG.md entry, without -dev; a version-sync check enforces it. -->
-    <Version>0.18.0.1</Version>
+    <Version>0.18.1.0</Version>
   </PropertyGroup>
 </Project>

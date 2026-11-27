@@ -87,8 +87,9 @@ loaded, the tab says so.
 The list window shows every ingredient with a **Buy** box.
 
 - **Where to shop**: **My region (cross-world)** covers the worlds you can reach
-  from a main-city aetheryte. **All data centers** adds the other regions, which
-  need Data Center Travel. Every list window shares this choice.
+  from a main-city aetheryte. **All data centers** adds Materia in Oceania, which
+  needs Data Center Travel. It never adds other regions, because the game won't
+  let you travel to them. Every list window shares this choice.
 - Untick anything you don't want to buy. **Tick all** ticks every row, and reads
   **Untick all** once they're all ticked. Your ticks are saved for Artisan lists
   and My shopping lists.

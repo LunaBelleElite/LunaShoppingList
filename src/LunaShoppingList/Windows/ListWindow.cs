@@ -475,7 +475,7 @@ public sealed class ListWindow : Window, IDisposable
         if (ImGui.RadioButton("All data centers", scope == TravelScopeKind.CrossDataCenter))
             SetScope(TravelScopeKind.CrossDataCenter);
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Includes other regions. Needs Data Center Travel for those.");
+            ImGui.SetTooltip("Your region plus Materia (Oceania), which needs Data Center Travel.");
     }
 
     private void SetScope(TravelScopeKind scope)

@@ -6,6 +6,6 @@ public enum TravelScopeKind
     /// <summary>Worlds reachable from a main-city aetheryte: the same region as the current world.</summary>
     CrossWorld,
 
-    /// <summary>Every public world; needs Data Center Travel.</summary>
+    /// <summary>The same region as CrossWorld plus the Oceania worlds, which need Data Center Travel. Other regions can't be travelled to.</summary>
     CrossDataCenter,
 }

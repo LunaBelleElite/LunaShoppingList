@@ -56,23 +56,30 @@ public class TravelScopeResolverTests
     }
 
     [Fact]
-    public void CrossDataCenter_ReturnsEveryRegionPublicWorldsOnly()
+    public void CrossDataCenter_ReturnsOwnRegionPlusMateria_PublicWorldsOnly()
     {
         var r = TravelScopeResolver.Resolve(TravelScopeKind.CrossDataCenter, ById(1), Worlds);
-        Assert.Equal(10, r.Worlds.Count);
+        Assert.Equal(7, r.Worlds.Count);
         Assert.DoesNotContain(r.Worlds, w => w.Id == 99);
+        Assert.DoesNotContain(r.Worlds, w => w.Region == "Europe");
         Assert.Equal(
-            ["Aether", "Chaos", "Crystal", "Dynamis", "Light", "Materia", "Primal"],
+            ["Aether", "Crystal", "Dynamis", "Materia", "Primal"],
             r.UniversalisScopes);
     }
 
     [Fact]
-    public void CrossDataCenter_FromMateria_StillReturnsEveryRegion()
+    public void CrossDataCenter_FromEurope_ReturnsEuropePlusMateriaNotNorthAmerica()
+    {
+        var r = TravelScopeResolver.Resolve(TravelScopeKind.CrossDataCenter, ById(3), Worlds);
+        Assert.Equal(["Cerberus", "Ragnarok", "Alpha", "Bismarck", "Ravana"], Names(r));
+        Assert.DoesNotContain(r.Worlds, w => w.Region == "North America");
+    }
+
+    [Fact]
+    public void CrossDataCenter_FromMateria_ReturnsOnlyMateria()
     {
         var r = TravelScopeResolver.Resolve(TravelScopeKind.CrossDataCenter, ById(6), Worlds);
-        Assert.Equal(10, r.Worlds.Count);
-        Assert.Contains(r.Worlds, w => w.Region == "North America");
-        Assert.Contains(r.Worlds, w => w.Region == "Europe");
+        Assert.Equal(["Bismarck", "Ravana"], Names(r));
     }
 
     [Theory]
@@ -105,7 +112,7 @@ public class TravelScopeResolverTests
     {
         var current = W(500, "Elsewhere", "Zed", "Mars");
         var r = TravelScopeResolver.Resolve(TravelScopeKind.CrossDataCenter, current, Worlds);
-        Assert.Equal(11, r.Worlds.Count);
+        Assert.Equal(["Bismarck", "Ravana", "Elsewhere"], Names(r));
         Assert.Contains("Zed", r.UniversalisScopes);
     }
 
@@ -132,7 +139,7 @@ public class TravelScopeResolverTests
     {
         var dup = Worlds.Concat(Worlds).ToArray();
         var r = TravelScopeResolver.Resolve(TravelScopeKind.CrossDataCenter, ById(1), dup);
-        Assert.Equal(10, r.Worlds.Count);
+        Assert.Equal(7, r.Worlds.Count);
         Assert.Equal(r.Worlds.Count, r.Worlds.Select(w => w.Id).Distinct().Count());
     }
 
@@ -182,8 +189,8 @@ public class TravelScopeResolverTests
     {
         string[] expected =
         [
-            "Adamantoise", "Cactuar", "Cerberus", "Ragnarok", "Halicarnassus", "Cuchulainn",
-            "Alpha", "Bismarck", "Ravana", "Behemoth",
+            "Adamantoise", "Cactuar", "Halicarnassus", "Cuchulainn",
+            "Bismarck", "Ravana", "Behemoth",
         ];
         var rng = new Random(12345);
         for (var i = 0; i < 20; i++)
@@ -253,12 +260,12 @@ public class TravelScopeResolverTests
     }
 
     [Fact]
-    public void CrossDataCenter_EmptyRegion_StillReturnsEverything()
+    public void CrossDataCenter_EmptyRegion_FailsSafeToOwnDataCenterPlusMateria()
     {
         var current = W(1, "Adamantoise", "Aether", "");
         var r = TravelScopeResolver.Resolve(TravelScopeKind.CrossDataCenter, current, Worlds);
-        Assert.Equal(10, r.Worlds.Count);
-        Assert.Equal(7, r.UniversalisScopes.Count);
+        Assert.Equal(["Adamantoise", "Cactuar", "Bismarck", "Ravana"], Names(r));
+        Assert.Equal(["Aether", "Materia"], r.UniversalisScopes);
     }
 
     [Fact]
