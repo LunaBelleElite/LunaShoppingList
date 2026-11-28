@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.0.0 - 2026-11-27
+
+- This is the first full release.
+- Nothing changed in how the plugin works.
+
 ## 0.18.1.0 - 2026-11-27
 
 - All data centers now means your own region plus Materia. It no longer offers worlds in other regions, which the game won't let you travel to.
